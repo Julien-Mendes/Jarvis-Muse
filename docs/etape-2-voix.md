@@ -6,10 +6,12 @@ lit un texte avec Piper, un moteur de synthèse vocale 100 % local : aucune
 donnée ne quitte la machine, aucun appel réseau pendant la lecture.
 
 **Choix des voix (vérifié le 21 nov. 2026) :**
-- Français : Piper `fr_FR-gilles-low` — voix masculine, licence libre CC0, la
-  mieux notée en français. Kokoro n'a qu'une seule voix française, féminine
-  (`ff_siwis`) : c'est pour ça que le français passe par Piper.
-- Anglais : Piper `en_GB-alan-medium` — voix masculine britannique.
+- Français : Piper `fr_FR-upmc-medium` — voix féminine (UPMC/LIMSI), choisie
+  le 21 nov. 2026 (Gilles jugée trop robotique, Tom écartée aussi).
+- Anglais : Piper `en_GB-alan-medium` — voix masculine britannique. **Langue
+  par défaut à moyen terme** (décision 21 nov. 2026) : les voix françaises
+  écoutées ne sont pas assez naturelles pour l'instant ; le français reste
+  disponible avec `--langue fr` (voix UPMC).
 - Kokoro (voix britanniques `bm_george`, `bm_lewis`, `bm_daniel`, `bm_fable`)
   reste une option ultérieure pour l'anglais, pas pour cette étape.
 
@@ -35,7 +37,7 @@ python -m venv .venv
 pip install -r scripts\requirements-etape2.txt
 
 # 3. Télécharger les deux voix (français + anglais, ~60 Mo chacune)
-python -m piper.download_voices fr_FR-gilles-low en_GB-alan-medium --data-dir models
+python -m piper.download_voices fr_FR-upmc-medium en_GB-alan-medium --data-dir models
 ```
 
 Si PowerShell refuse d'activer l'environnement (`running scripts is disabled`),
@@ -86,7 +88,7 @@ contenu sensible (mot de passe, code, information privée).
 |---|---|
 | `python n'est pas reconnu` | Python n'est pas dans le PATH : réinstaller Python en cochant « Add Python to PATH », ou utiliser `py` à la place de `python`. |
 | `le module piper n'est pas installé` | Activer l'environnement virtuel (`.venv\Scripts\Activate.ps1`), puis `pip install -r scripts\requirements-etape2.txt`. |
-| `voix introuvable dans models` | Télécharger la voix indiquée : `python -m piper.download_voices fr_FR-gilles-low --data-dir models` (ou `en_GB-alan-medium` pour l'anglais). Vérifier que les fichiers `.onnx` et `.onnx.json` sont bien dans `models/`. |
+| `voix introuvable dans models` | Télécharger la voix indiquée : `python -m piper.download_voices fr_FR-upmc-medium --data-dir models` (ou `en_GB-alan-medium` pour l'anglais). Vérifier que les fichiers `.onnx` et `.onnx.json` sont bien dans `models/`. |
 | Pas de son | Vérifier le volume et la sortie audio par défaut de Windows (icône haut-parleur). Tester avec `--sortie test.wav`, puis ouvrir le fichier : si le WAV contient du son, le problème vient de la sortie audio, pas de Piper. |
 | La voix parle trop vite / trop lentement | Ajuster avec `--vitesse` (ex. `--vitesse 0.9` pour ralentir). |
 | Erreur liée à espeak / phonèmes | Réinstaller Piper : `pip install --force-reinstall piper-tts` (le paquet inclut ses propres données de prononciation). |
@@ -116,4 +118,4 @@ contenu sensible (mot de passe, code, information privée).
 
 - ✅ Script `scripts/lire_voix.py` et guide livrés dans le dépôt (21 nov. 2026).
 - ⏳ Reste : installation et premier test sur le laptop de Julien (Python +
-  Piper + voix `gilles`), puis premier résumé lu à voix haute.
+  Piper + voix `upmc` (français) et `alan` (anglais, défaut à moyen terme)), puis premier résumé lu à voix haute.

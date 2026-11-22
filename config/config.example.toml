@@ -4,19 +4,24 @@
 # Les valeurs privées vont dans config.local.toml, les secrets dans .env.
 
 [general]
-# Langues : "fr" prioritaire, "en" en option. Bascule automatique selon la langue parlée.
-langue = "fr"
+# Langues : "en" par défaut à moyen terme (décision 21 nov. 2026) — les voix
+# françaises Piper écoutées (Gilles, Tom) sonnaient trop robotiques ; le
+# français passe par la voix UPMC quand on y revient. Bascule automatique
+# selon la langue parlée : pas encore implémentée, une langue à la fois.
+langue = "en"
 langues_disponibles = ["fr", "en"]
 fuseau_horaire = "America/Toronto"
 
 [voix]
-# TTS locale : Piper (recommandé pour le français) ou Kokoro.
-# Français (masculin) : Piper "gilles" (licence libre CC0, la mieux notée en français).
-# Kokoro n'a qu'une seule voix française, féminine (ff_siwis).
-# Anglais (britannique) : Kokoro bm_george / bm_lewis / bm_daniel / bm_fable, ou Piper.
+# TTS locale : Piper (voix par défaut, voir scripts/lire_voix.py).
+# Français : Piper "upmc" (féminine, UPMC/LIMSI — choisie le 21 nov. 2026 ;
+# "gilles" jugée trop robotique). Télécharger avec :
+#   python -m piper.download_voices fr_FR-upmc-medium --data-dir models
+# Anglais (défaut à moyen terme) : Piper "alan" (masculine britannique),
+# voix "en_GB-alan-medium". Kokoro reste une option ultérieure pour l'anglais.
 moteur = "piper"
-voix_fr = "gilles"
-voix_en = "bm_george"
+voix_fr = "upmc"
+voix_en = "alan"
 vitesse = 1.0
 # Effet "voice in the walls" (optionnel)
 effet_murs = false
@@ -43,7 +48,7 @@ modele_anthropic = "claude-haiku-4-5-20251001"
 fournisseur_stt = "groq"
 modele_stt_groq = "whisper-large-v3-turbo"
 modele_stt_local = "base"
-langue = "fr"
+langue = "en"  # Défaut « en » à moyen terme (décision 21 nov. 2026).
 duree_max_enregistrement = 30.0
 duree_min_enregistrement = 0.3
 max_tours_outils = 3

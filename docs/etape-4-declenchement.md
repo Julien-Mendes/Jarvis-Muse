@@ -38,7 +38,7 @@ Précision importante, à ne pas confondre :
 
 - Python 3.10+ et Windows (laptop de Julien pour tester).
 - Microphone et haut-parleurs.
-- Étapes 2 et 3 installées : Piper + voix `gilles` (lecture des réponses),
+- Étapes 2 et 3 installées : Piper + voix `alan` (anglais, défaut à moyen terme) et `upmc` (français) (lecture des réponses),
   minuteur (outil de la boucle).
 - Une clé **Groq** gratuite (voir ci-dessous) — sauf si le fournisseur est
   passé à Anthropic dans la configuration.
@@ -152,7 +152,7 @@ python scripts\minuteur.py surveiller
   de réessayer. (C'est le même comportement que dans le dépôt B.)
 - **« Annonce vocale indisponible »** : Piper ou la voix n'est pas
   installé. La réponse est affichée à l'écran quand même. Suivre
-  `docs/etape-2-voix.md` pour installer Piper et la voix `gilles`.
+  `docs/etape-2-voix.md` pour installer Piper et la voix `alan` (anglais) ou `upmc` (français).
 - **« Je n'ai pas pu régler le minuteur »** : le message d'erreur du
   minuteur est affiché (durée trop longue, 20 minuteurs déjà actifs…).
   Voir `docs/etape-3-minuteur.md`.

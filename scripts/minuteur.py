@@ -171,8 +171,11 @@ def annoncer(message: str) -> None:
     carillon()
     script_voix = Path(__file__).resolve().parent / "lire_voix.py"
     try:
+        # Messages en français : forcer la voix française (UPMC), même si la
+        # langue par défaut de la boucle est l'anglais (décision 21 nov. 2026).
         resultat = subprocess.run(
-            [sys.executable, str(script_voix), "--texte", message],
+            [sys.executable, str(script_voix), "--texte", message,
+             "--langue", "fr"],
             capture_output=True, text=True, timeout=120,
         )
         if resultat.returncode != 0:

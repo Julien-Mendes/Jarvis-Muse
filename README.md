@@ -7,7 +7,7 @@ Pont entre Carson (Muse) et un assistant local façon Jarvis.
 Hybride : le spectaculaire du dépôt A (Julian-Ivanov/jarvis-voice-assistant —
 vision d'écran, contrôle du navigateur et du PC) + la structure du dépôt B
 (tanishvbuk/jarvis-assistant — outils Google, minuteurs, HUD, sécurité), le tout
-en français, avec Carson comme cerveau.
+avec Carson comme cerveau (réponses en anglais par défaut à moyen terme, décision 21 nov. 2026).
 
 Analyse complète des deux dépôts : `docs/` (25 pages, 39 capacités,
 19 décisions à cocher).
@@ -32,7 +32,7 @@ Idée en réflexion : Carson envoie ses résumés au Jarvis local pour lecture �
 ## Feuille de route
 
 Principe : ne pas transcrire le code Claude vers Muse Code d'un bloc. Construire
-étape par étape, en français, en gardant Carson comme cerveau et ce dépôt comme
+étape par étape, en gardant Carson comme cerveau et ce dépôt comme
 pont — et ne construire une brique locale que si elle apporte quelque chose que
 Carson ne fait pas déjà.
 
@@ -40,7 +40,7 @@ Carson ne fait pas déjà.
 |---|---|---|
 | 0 — Décisions | Cocher la liste du §5 de la description | ✅ En cours — 11 décisions validées le 21 nov. 2026 |
 | 1 — Fondations | `config/` séparé (publique / locale / secrets), règles de sécurité écrites (`docs/regles-securite.md`) | ✅ Fait |
-| 2 — Voix locale | Vérifier une voix française (Piper `gilles` / Kokoro) ; petit script qui lit à voix haute un texte fourni par Carson. Bilingue FR + EN. Push-to-talk (F9) comme déclencheur simple, avant tout mot de réveil. | 🚧 En cours — livré le 21 nov. : `scripts/lire_voix.py` (Piper, bilingue FR/EN), `scripts/requirements-etape2.txt`, `docs/etape-2-voix.md`, dossier `a-dire/` pour les textes à lire. Reste : installation et test sur le laptop de Julien (Python + Piper + voix `gilles`), puis premier résumé lu à voix haute. Déclencheur F9 validé le 21 nov. comme déclencheur pour la suite (étape 4) — le script s'invoque en ligne de commande pour l'instant. |
+| 2 — Voix locale | Voix locale (Piper `upmc` en français, `alan` en anglais — anglais par défaut à moyen terme) ; petit script qui lit à voix haute un texte fourni par Carson. Bilingue FR + EN. Push-to-talk (F9) comme déclencheur simple, avant tout mot de réveil. | 🚧 En cours — livré le 21 nov. : `scripts/lire_voix.py` (Piper, bilingue FR/EN), `scripts/requirements-etape2.txt`, `docs/etape-2-voix.md`, dossier `a-dire/` pour les textes à lire. Reste : installation et test sur le laptop de Julien (Python + Piper + voix `alan` et `upmc`), puis premier résumé lu à voix haute. Déclencheur F9 validé le 21 nov. comme déclencheur pour la suite (étape 4) — le script s'invoque en ligne de commande pour l'instant. |
 | 3 — Minuteur local persistant | Reprendre le patron `timers.py` du dépôt B (JSON persistant, carillon, annonce des retards au démarrage). Première brique qui agit seule, sans Carson. | 🚧 En cours — livré le 21 nov. : `scripts/minuteur.py` (compte à rebours / rappel à heure fixe, JSON persistant, carillon + annonce vocale via `lire_voix.py`, annonce des retards au démarrage), `docs/etape-3-minuteur.md`. Reste : test sur le laptop de Julien (minuteur d'1 minute, lister, annuler). Auto-start au login : décision encore ouverte, non configuré dans cette étape. |
 | 4 — Déclenchement | Boucle vocale interactive F9 (maintenir pour parler, relâcher pour envoyer, F9 pour interrompre). Cerveau par défaut : Groq gratuit (gpt-oss-120b) ; Claude Haiku par API en alternative configurable. STT Groq Whisper, interchangeable avec faster-whisper local. Premier outil : le minuteur. | 🚧 En cours — livré le 21 nov. : `scripts/boucle_voix.py` (F9, STT Groq Whisper interchangeable, cerveau Groq / Haiku configurable, outil minuteur), `scripts/requirements-etape4.txt`, `docs/etape-4-declenchement.md`. Reste : test sur le laptop de Julien (clé Groq gratuite, premier tour « mets un minuteur d'une minute »). |
 | 5 — Yeux et mains | Vision d'écran ciblée + contrôle navigateur (Playwright), avec consentement explicite et capture limitée. Plus gros chantier ; comble la plus grande limite de Carson. | 🚧 En cours — livré le 21 nov. : `scripts/yeux.py` (capture ciblée fenêtre/région, vision Groq qwen3.8-27b par défaut — un seul service Groq — Haiku en repli, confirmation orale avant chaque capture), `scripts/navigateur.py` (Playwright : ouvrir, rechercher, cliquer, lire, capture de page ; lecture seule, aucun formulaire/connexion/achat), `scripts/requirements-etape5.txt`, `docs/etape-5-yeux-mains.md`. Branchés dans `scripts/boucle_voix.py` (« regarde mon écran » avec confirmation, « ouvre [site] »). Reste : test sur le laptop de Julien (première capture décrite, première ouverture de navigateur). Modèle vision Groq (Llama 4 Scout) retiré du palier gratuit le 17 juill. 2026 — défaut basculé vers Groq qwen3.8-27b (preview, retirable à court préavis) le 21 nov., Haiku en repli. |
@@ -58,7 +58,7 @@ du code allemand ou anglais.
 | 1 — Fondations | Règles de sécurité (données externes enveloppées + blocage des écritures + confirmation en code) | ✅ Oui |
 | 1 — Fondations | Configuration séparée (publique / locale privée / secrets en .env) | ✅ Oui |
 | 1 — Fondations | Journalisation par tour sans contenu | ⏳ Plus tard |
-| 2 — Voix locale | TTS locale bilingue FR + EN (Piper `gilles` en français, Kokoro/Piper en anglais) | ✅ Oui |
+| 2 — Voix locale | TTS locale bilingue FR + EN (Piper `upmc` en français, Piper `alan` en anglais — anglais par défaut à moyen terme) | ✅ Oui |
 | 2 — Voix locale | Mot de réveil local | ⏳ Plus tard |
 | 2 — Voix locale | Double-clap | ⏳ Plus tard |
 | 3 — Temps et rappels | Minuteur / rappels persistants | ✅ Oui |

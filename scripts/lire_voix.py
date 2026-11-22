@@ -10,9 +10,10 @@ Tout se passe sur la machine : aucune donnée ne quitte le poste, aucun appel
 réseau. Les voix sont téléchargées une seule fois (voir docs/etape-2-voix.md).
 
 Voix par défaut (décisions du 21 nov. 2026) :
-  - français : Piper « gilles » (masculine, licence libre CC0).
-    Kokoro n'a qu'une seule voix française, féminine (ff_siwis).
-  - anglais : Piper « alan » (masculine britannique).
+  - français : Piper « upmc » (féminine, UPMC/LIMSI) — choisie le 21 nov. 2026
+    (Gilles jugée trop robotique, Tom écartée aussi).
+  - anglais : Piper « alan » (masculine britannique) — langue par défaut à
+    moyen terme, jusqu'à ce qu'une voix française plus écoutable soit trouvée.
 """
 
 import argparse
@@ -24,7 +25,7 @@ from pathlib import Path
 
 # Voix par défaut par langue.
 VOIX_DEFAUT = {
-    "fr": "fr_FR-gilles-low",    # Piper, masculine, licence libre CC0.
+    "fr": "fr_FR-upmc-medium",  # Piper, féminine (UPMC/LIMSI) — choisie le 21 nov. 2026.
     "en": "en_GB-alan-medium",   # Piper, masculine britannique.
 }
 
@@ -103,12 +104,12 @@ def main() -> int:
     groupe.add_argument("--texte", help="Texte à lire à voix haute.")
     groupe.add_argument("--fichier", help="Fichier texte (.txt) à lire à voix haute.")
     parser.add_argument(
-        "--langue", choices=["fr", "en"], default="fr",
-        help="Langue du texte (défaut : fr).",
+        "--langue", choices=["fr", "en"], default="en",
+        help="Langue du texte (défaut : en, décision 21 nov. 2026, moyen terme).",
     )
     parser.add_argument(
         "--voix", default=None,
-        help="Nom de la voix Piper (défaut : fr_FR-gilles-low en fr, "
+        help="Nom de la voix Piper (défaut : fr_FR-upmc-medium en fr, "
         "en_GB-alan-medium en en).",
     )
     parser.add_argument(

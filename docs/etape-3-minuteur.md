@@ -89,7 +89,7 @@ Pour un test plus rapide : `--minutes 0.1` = 6 secondes.
 - **« Annonce vocale indisponible »** : Piper ou la voix n'est pas
   installé. Le message est affiché à l'écran, le minuteur est quand même
   retiré. Suivre `docs/etape-2-voix.md` pour installer Piper et la voix
-  `gilles`.
+  `upmc` (français).
 - **« il y a déjà 20 minuteurs actifs »** : annulez-en d'abord
   (`annuler tout` pour tout effacer).
 - **« … est déjà passé »** : l'heure demandée est dans le passé. Pour
