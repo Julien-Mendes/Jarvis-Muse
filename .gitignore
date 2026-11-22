@@ -1,0 +1,21 @@
+# Jarvis-Muse — fichiers privés et générés (ne jamais commiter)
+
+# Configuration locale privée et secrets
+config.local.toml
+config/config.local.toml
+.env
+config/.env
+
+# Jetons OAuth et sessions
+tokens/
+
+# Modèles et voix téléchargés (lourds, récupérables)
+models/
+voices/
+data/
+logs/
+
+# Python
+__pycache__/
+*.pyc
+.venv/

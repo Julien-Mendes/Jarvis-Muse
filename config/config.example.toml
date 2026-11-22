@@ -1,0 +1,46 @@
+# Jarvis-Muse — configuration publique (exemple)
+# Copier vers config.toml et adapter.
+# Ce fichier est versionné. Ne jamais y mettre de secret ni de chemin personnel.
+# Les valeurs privées vont dans config.local.toml, les secrets dans .env.
+
+[general]
+# Langues : "fr" prioritaire, "en" en option. Bascule automatique selon la langue parlée.
+langue = "fr"
+langues_disponibles = ["fr", "en"]
+fuseau_horaire = "America/Toronto"
+
+[voix]
+# TTS locale : Piper (recommandé pour le français) ou Kokoro.
+# Français (masculin) : Piper "gilles" (licence libre CC0, la mieux notée en français).
+# Kokoro n'a qu'une seule voix française, féminine (ff_siwis).
+# Anglais (britannique) : Kokoro bm_george / bm_lewis / bm_daniel / bm_fable, ou Piper.
+moteur = "piper"
+voix_fr = "gilles"
+voix_en = "bm_george"
+vitesse = 1.0
+# Effet "voice in the walls" (optionnel)
+effet_murs = false
+
+[declenchement]
+# Déclencheur actuel : lancement manuel de la session.
+# Mot de réveil et double-clap : décisions "plus tard" (21 nov. 2026).
+# Push-to-talk (touche globale, ex. F9) : à décider.
+mode = "manuel"
+touche_push_to_talk = "F9"
+
+[minuteur]
+# Minuteur persistant local (décision OUI, 21 nov. 2026)
+max_actifs = 20
+duree_max = "7j"
+fichier = "data/timers.json"
+
+[securite]
+# Ne jamais changer sans relire docs/regles-securite.md
+hote_serveur = "127.0.0.1"
+blocage_ecritures_apres_lecture_externe = true
+confirmation_orale_max_mots = 8
+
+[hud]
+# HUD local léger (décision OUI, 21 nov. 2026) — version allégée.
+# Le HUD du dépôt B coûte ~760 Mo en veille : garder celui-ci minimal.
+active = true

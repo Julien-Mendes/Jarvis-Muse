@@ -1,0 +1,22 @@
+# Jarvis-Muse — configuration locale privée (exemple)
+# Copier vers config.local.toml et adapter. Le fichier réel est GITIGNORÉ :
+# ne jamais le commiter, il contient des chemins et des comptes propres à la machine.
+# Les secrets (clés API) vont dans .env, pas ici.
+
+[general]
+nom_utilisateur = "Julien"
+formule_adresse = "Monsieur"
+
+[chemins]
+# Chemins Windows de la machine (exemples à adapter)
+# dossier_documents = "C:\\Users\\Julien\\Documents"
+# dossier_musique = "C:\\Users\\Julien\\Music"
+
+[google]
+# Comptes Google utilisés pour Gmail / Calendrier / Tâches (lecture seule, sauf
+# calendrier personnel après confirmation orale explicite).
+# comptes = ["personnel"]
+
+[applications]
+# Applications à lancer au démarrage de session (lancement de session : à décider).
+# navigateur = "chrome"
