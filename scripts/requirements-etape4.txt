@@ -1,0 +1,16 @@
+# Dépendances de l'étape 4 — Boucle vocale interactive (F9)
+# Installer avec : pip install -r scripts/requirements-etape4.txt
+# (dans l'environnement virtuel du dépôt, voir docs/etape-4-declenchement.md)
+
+sounddevice>=0.5
+numpy>=2.0
+pynput>=1.8
+groq>=0.20
+python-dotenv>=1.0
+
+# Optionnel — seulement pour le cerveau Claude Haiku (payant à l'usage) :
+# anthropic>=0.40
+
+# Optionnel — seulement pour la transcription locale faster-whisper
+# (décision bloc 5, encore ouverte) :
+# faster-whisper>=1.0

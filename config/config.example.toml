@@ -22,12 +22,32 @@ vitesse = 1.0
 effet_murs = false
 
 [declenchement]
-# Déclencheur actuel : lancement manuel de la session.
+# Déclencheur actuel : push-to-talk F9 (validé le 21 nov. 2026, étape 4).
 # Mot de réveil et double-clap : décisions "plus tard" (21 nov. 2026).
-# Push-to-talk (touche globale F9) : validé le 21 nov. 2026 comme déclencheur
-# pour la suite (étape 4) — maintenir F9 pour parler, relâcher pour arrêter.
-mode = "manuel"
+# Maintenir F9 pour parler, relâcher pour envoyer ; F9 pendant la réponse
+# l'interrompt.
+mode = "push_to_talk"
 touche_push_to_talk = "F9"
+
+[boucle]
+# Boucle vocale interactive (étape 4) — scripts/boucle_voix.py.
+# Cerveau par défaut : Groq gratuit (gpt-oss-120b, palier gratuit, sans carte).
+# Alternative : "anthropic" (Claude Haiku par API, payant à l'usage, clé dans .env).
+# Précision : Muse Code est l'outillage de construction, pas le cerveau de la
+# boucle (pas une API temps réel) — la boucle fait un appel API par tour.
+fournisseur_llm = "groq"
+modele_groq = "openai/gpt-oss-120b"
+modele_anthropic = "claude-haiku-4-5-20251001"
+# Transcription par défaut : Groq Whisper (whisper-large-v3-turbo).
+# "local" = faster-whisper hors ligne (décision bloc 5, encore ouverte).
+fournisseur_stt = "groq"
+modele_stt_groq = "whisper-large-v3-turbo"
+modele_stt_local = "base"
+langue = "fr"
+duree_max_enregistrement = 30.0
+duree_min_enregistrement = 0.3
+max_tours_outils = 3
+max_tokens_reponse = 400
 
 [minuteur]
 # Minuteur persistant local (décision OUI, 21 nov. 2026)
