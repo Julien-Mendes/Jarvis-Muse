@@ -43,11 +43,28 @@ HUD = équivalent F9 (data/hud-ptt.json, sondé toutes les 0,2 s ; un clic
 pendant une réponse l'interrompt, comme F9). Aucun port réseau.
 
 Étape 7 — Application (scripts/app.py) : chaque tour est ajouté au
-journal de conversation data/conversation.jsonl (fonction
-journaliser_echange(), jamais bloquante, plafonnée aux 200 dernières
-lignes) — c'est l'historique affiché par l'application. Le HUD de
-l'étape 6 continue de fonctionner sans changement (même
+journal de conversation (fonction journaliser_echange(), jamais
+bloquante) — c'est l'historique affiché par l'application. Depuis
+l'étape 7.1, le journal est un fichier par jour
+(data/conversations/AAAA-MM-JJ.jsonl) ; l'ancien fichier unique
+(data/conversation.jsonl, plafonné à 200 lignes) n'est plus écrit.
+Le HUD de l'étape 6 continue de fonctionner sans changement (même
 data/hud-state.json, même data/hud-ptt.json).
+
+Étape 7.1 — Historique, chat texte, raccourci, journal des tours :
+  - Journal par jour : les tours vont désormais dans
+    data/conversations/AAAA-MM-JJ.jsonl (fonction journaliser_echange(),
+    ajout en fin de fichier, sans plafond) ; l'ancien
+    data/conversation.jsonl n'est plus écrit, il est lu en repli par
+    l'application.
+  - Chat texte : l'application écrit les messages tapés dans
+    data/texte-demande.json ; la boucle le sonde toutes les 0,2 s (comme
+    le PTT) et les traite comme un tour vocal (réponse affichée et lue
+    à voix haute).
+  - Journal des tours : chaque tour est résumé dans
+    logs/tours-AAAA-MM-JJ.jsonl (fonction journaliser_tour(), modèle
+    turnlog.py du dépôt B) — durées, jetons, coût estimé, noms des
+    outils, JAMAIS le contenu des conversations (règle §7).
 
 Sécurité (docs/regles-securite.md) :
   - Depuis l'étape 5, des données externes sont lues : description d'écran
@@ -98,6 +115,7 @@ SCRIPT_MINUTEUR = RACINE / "scripts" / "minuteur.py"
 SCRIPT_YEUX = RACINE / "scripts" / "yeux.py"
 SCRIPT_NAVIGATEUR = RACINE / "scripts" / "navigateur.py"
 SCRIPT_HUD = RACINE / "scripts" / "hud.py"
+SCRIPT_APP = RACINE / "scripts" / "app.py"
 
 # Valeurs par défaut (surchargées par config.toml [boucle], [yeux] et
 # [navigateur], puis par .env).
@@ -240,19 +258,37 @@ def ecrire_etat_hud(etat: str, transcription: str = "",
 
 
 # ---------------------------------------------------------------------------
-# Étape 7 — Journal de conversation pour l'application (scripts/app.py)
+# Étape 7.1 — Journal par jour, demande texte (chat), journal des tours
 # ---------------------------------------------------------------------------
 
-FICHIER_CONVERSATION = RACINE / "data" / "conversation.jsonl"
-MAX_LIGNES_CONVERSATION = 200
+DOSSIER_CONVERSATIONS = RACINE / "data" / "conversations"
+# Ancien journal unique (étape 7) : plus écrit par la boucle, lu en repli
+# par l'application si le journal du jour n'existe pas encore.
+FICHIER_CONVERSATION_ANCIEN = RACINE / "data" / "conversation.jsonl"
+FICHIER_DEMANDE_TEXTE = RACINE / "data" / "texte-demande.json"
+FRAICHEUR_DEMANDE_TEXTE = 300.0  # secondes : une demande plus vieille est ignorée.
+DOSSIER_TOURS = RACINE / "logs"
+
+# Tarifs estimés (Anthropic Haiku, à vérifier sur console.anthropic.com) —
+# Groq est gratuit (coût 0). Taux USD→GBP approximatif.
+TARIF_ANTHROPIC_ENTREE_USD_PAR_MILLION = 1.00
+TARIF_ANTHROPIC_SORTIE_USD_PAR_MILLION = 5.00
+TAUX_USD_GBP = 0.79
+
+
+def chemin_journal_jour(jour: datetime | None = None) -> Path:
+    """Chemin du journal du jour : data/conversations/AAAA-MM-JJ.jsonl."""
+    ref = jour or datetime.now(FUSEAU)
+    return DOSSIER_CONVERSATIONS / f"{ref.strftime('%Y-%m-%d')}.jsonl"
 
 
 def journaliser_echange(texte_utilisateur: str, texte_jarvis: str) -> None:
-    """Ajoute un tour au journal de conversation (data/conversation.jsonl).
+    """Ajoute un tour au journal du jour (data/conversations/AAAA-MM-JJ.jsonl).
 
     Une ligne JSON par message : {"role": "user"|"jarvis", "texte": ...,
-    "heure": "ISO"}. Plafonné aux 200 dernières lignes (les plus anciennes
-    sont retirées). Écriture atomique (fichier temporaire + os.replace),
+    "heure": "ISO"}. Ajout en fin de fichier, sans plafond et sans
+    réécriture : l'historique d'un jour ne disparaît plus (l'ancien
+    journal unique, plafonné à 200 lignes, est remplacé). Écriture
     jamais bloquante : toute erreur est silencieuse — la boucle ne doit
     jamais planter pour le journal.
 
@@ -263,23 +299,135 @@ def journaliser_echange(texte_utilisateur: str, texte_jarvis: str) -> None:
     contenu des conversations).
     """
     try:
-        FICHIER_CONVERSATION.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            lignes = FICHIER_CONVERSATION.read_text(
-                encoding="utf-8").splitlines()
-        except OSError:
-            lignes = []
+        DOSSIER_CONVERSATIONS.mkdir(parents=True, exist_ok=True)
         maintenant = datetime.now(FUSEAU).isoformat(timespec="seconds")
-        lignes.append(json.dumps(
-            {"role": "user", "texte": texte_utilisateur,
-             "heure": maintenant}, ensure_ascii=False))
-        lignes.append(json.dumps(
-            {"role": "jarvis", "texte": texte_jarvis,
-             "heure": maintenant}, ensure_ascii=False))
-        lignes = lignes[-MAX_LIGNES_CONVERSATION:]
-        temporaire = FICHIER_CONVERSATION.with_suffix(".jsonl.tmp")
-        temporaire.write_text("\n".join(lignes) + "\n", encoding="utf-8")
-        os.replace(temporaire, FICHIER_CONVERSATION)
+        lignes = [
+            json.dumps({"role": "user", "texte": texte_utilisateur,
+                        "heure": maintenant}, ensure_ascii=False),
+            json.dumps({"role": "jarvis", "texte": texte_jarvis,
+                        "heure": maintenant}, ensure_ascii=False),
+        ]
+        with chemin_journal_jour().open("a", encoding="utf-8") as f:
+            f.write("\n".join(lignes) + "\n")
+    except OSError:
+        pass
+
+
+def lire_demande_texte() -> str | None:
+    """Lit (et consomme) une demande texte de l'application.
+
+    data/texte-demande.json : {"texte": ..., "horodatage": "ISO"} — écrit
+    par l'application quand Julien tape un message (scripts/app.py,
+    champ de saisie). Le fichier est supprimé dès sa lecture : une
+    demande n'est traitée qu'une fois. Une demande périmée (> 5 min,
+    ex. boucle arrêtée entre-temps) est ignorée. Ne lève jamais
+    d'exception.
+    """
+    try:
+        donnees = json.loads(
+            FICHIER_DEMANDE_TEXTE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    try:
+        FICHIER_DEMANDE_TEXTE.unlink(missing_ok=True)
+    except OSError:
+        pass
+    if not isinstance(donnees, dict):
+        return None
+    texte = str(donnees.get("texte", "")).strip()
+    if not texte:
+        return None
+    try:
+        moment = datetime.fromisoformat(str(donnees.get("horodatage", "")))
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=FUSEAU)
+        age = (datetime.now(FUSEAU) - moment).total_seconds()
+    except ValueError:
+        return None
+    if age < 0 or age > FRAICHEUR_DEMANDE_TEXTE:
+        return None
+    return texte
+
+
+def estimer_cout_usd(fournisseur: str, entree_tokens: int,
+                     sortie_tokens: int) -> float:
+    """Coût estimé en USD : 0 pour Groq (palier gratuit) ; tarif Haiku
+    (estimation, à vérifier sur console.anthropic.com) pour Anthropic."""
+    if fournisseur != "anthropic":
+        return 0.0
+    return round(
+        entree_tokens / 1_000_000
+        * TARIF_ANTHROPIC_ENTREE_USD_PAR_MILLION
+        + sortie_tokens / 1_000_000
+        * TARIF_ANTHROPIC_SORTIE_USD_PAR_MILLION, 6)
+
+
+def _nouveau_bilan(config: dict, mode: str) -> dict:
+    """Bilan vierge d'un tour, pour le journal des tours (étape 7.1).
+
+    "premier_token_s" : le client Groq ne diffuse pas les jetons en
+    continu — le premier jeton arrive avec la réponse complète, donc
+    cette durée égale la durée de l'appel LLM ("llm_s"). "premier_audio_s"
+    est mesuré jusqu'au lancement de la lecture vocale.
+    """
+    return {
+        "mode": mode,
+        "fournisseur": str(config["fournisseur_llm"]),
+        "modele": str(config["modele_groq"]
+                      if config["fournisseur_llm"] == "groq"
+                      else config["modele_anthropic"]),
+        "stt": str(config["fournisseur_stt"]),
+        "voix": "alan" if str(config["langue"]) == "en" else "upmc",
+        "enregistrement_s": None,
+        "transcription_s": None,
+        "premier_token_s": None,
+        "premier_audio_s": None,
+        "total_s": None,
+        "entree_tokens": 0,
+        "sortie_tokens": 0,
+        "cout_estime_usd": 0.0,
+        "cout_estime_gbp": 0.0,
+        "reprises": 0,
+        "outils": [],
+        "erreur": None,
+    }
+
+
+def journaliser_tour(bilan: dict) -> None:
+    """Ajoute une ligne au journal des tours (logs/tours-AAAA-MM-JJ.jsonl).
+
+    Modèle : turnlog.py du dépôt B (tanishvbuk/jarvis-assistant) — un
+    fichier par jour, une ligne JSON par tour : durées, jetons, coût
+    estimé, noms des outils. JAMAIS le contenu des conversations, jamais
+    l'audio, jamais les transcriptions (règle §7). Écriture jamais
+    bloquante.
+    """
+    try:
+        DOSSIER_TOURS.mkdir(parents=True, exist_ok=True)
+        ligne = {
+            "horodatage": datetime.now(FUSEAU).isoformat(timespec="seconds"),
+            "mode": bilan.get("mode", "voix"),
+            "fournisseur": bilan.get("fournisseur", ""),
+            "modele": bilan.get("modele", ""),
+            "stt": bilan.get("stt", ""),
+            "voix": bilan.get("voix", ""),
+            "enregistrement_s": bilan.get("enregistrement_s"),
+            "transcription_s": bilan.get("transcription_s"),
+            "premier_token_s": bilan.get("premier_token_s"),
+            "premier_audio_s": bilan.get("premier_audio_s"),
+            "total_s": bilan.get("total_s"),
+            "entree_tokens": bilan.get("entree_tokens", 0),
+            "sortie_tokens": bilan.get("sortie_tokens", 0),
+            "cout_estime_usd": bilan.get("cout_estime_usd", 0.0),
+            "cout_estime_gbp": bilan.get("cout_estime_gbp", 0.0),
+            "reprises": bilan.get("reprises", 0),
+            "outils": bilan.get("outils", []),
+            "erreur": bilan.get("erreur"),
+        }
+        chemin = (DOSSIER_TOURS
+                  / f"tours-{datetime.now(FUSEAU).strftime('%Y-%m-%d')}.jsonl")
+        with chemin.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(ligne, ensure_ascii=False) + "\n")
     except OSError:
         pass
 
@@ -651,7 +799,8 @@ class CerveauGroq:
         self.max_tokens = max_tokens
 
     def repondre(self, messages: list, outils: list) -> dict:
-        """Un tour de LLM. Retourne {"texte": str, "appels_outils": [...]}."""
+        """Un tour de LLM. Retourne {"texte": str, "appels_outils": [...],
+        "utilisation": {"entree": int, "sortie": int}}."""
         reponse = self.client.chat.completions.create(
             model=self.modele, messages=messages, tools=outils,
             tool_choice="auto", max_tokens=self.max_tokens, temperature=0.3)
@@ -667,7 +816,13 @@ class CerveauGroq:
                 "arguments": arguments,
                 "id": appel.id,
             })
-        return {"texte": message.content or "", "appels_outils": appels}
+        usage = getattr(reponse, "usage", None)
+        return {"texte": message.content or "", "appels_outils": appels,
+                "utilisation": {
+                    "entree": int(getattr(usage, "prompt_tokens", 0) or 0),
+                    "sortie": int(getattr(usage, "completion_tokens", 0)
+                                  or 0),
+                }}
 
     def message_assistant(self, reponse: dict) -> dict:
         """Message assistant à réinjecter dans l'historique du tour."""
@@ -694,7 +849,8 @@ class CerveauAnthropic:
         self.max_tokens = max_tokens
 
     def repondre(self, messages: list, outils: list) -> dict:
-        """Un tour de LLM. Retourne {"texte": str, "appels_outils": [...]}."""
+        """Un tour de LLM. Retourne {"texte": str, "appels_outils": [...],
+        "utilisation": {"entree": int, "sortie": int}}."""
         systeme = next(
             (m["content"] for m in messages if m["role"] == "system"), "")
         conversation = [m for m in messages if m["role"] != "system"]
@@ -717,8 +873,13 @@ class CerveauAnthropic:
                     "arguments": dict(bloc.input or {}),
                     "id": bloc.id,
                 })
+        usage = getattr(reponse, "usage", None)
         return {"texte": texte, "appels_outils": appels,
-                "_contenu_brut": reponse.content}
+                "_contenu_brut": reponse.content,
+                "utilisation": {
+                    "entree": int(getattr(usage, "input_tokens", 0) or 0),
+                    "sortie": int(getattr(usage, "output_tokens", 0) or 0),
+                }}
 
     def message_assistant(self, reponse: dict) -> dict:
         return {"role": "assistant", "content": reponse["_contenu_brut"]}
@@ -1138,14 +1299,29 @@ def executer_navigateur(demande: dict, session: SessionNavigateur | None,
 
 def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
                 donnees: Path | None, confirmation: dict | None = None,
-                session_navigateur=None) -> str:
+                session_navigateur=None, mesures: dict | None = None) -> str:
     """Traite une phrase entendue et retourne la réponse à lire à voix haute.
 
     `confirmation` est un dict partagé entre les tours ({"outil": ...,
     "arguments": ...}) : une demande de capture d'écran en attente de
     confirmation orale. Il est vidé dès qu'il est consommé ou annulé — une
     confirmation ne vaut que pour le tour précédent (règle §3).
+
+    `mesures` (optionnel, étape 7.1) est rempli au passage pour le journal
+    des tours : durée LLM cumulée ("llm_s"), jetons ("entree_tokens",
+    "sortie_tokens"), noms des outils utilisés ("outils"), erreur éventuelle
+    ("erreur"). Il ne contient jamais le contenu de la conversation.
     """
+    if mesures is not None:
+        mesures.setdefault("llm_s", 0.0)
+        mesures.setdefault("entree_tokens", 0)
+        mesures.setdefault("sortie_tokens", 0)
+        mesures.setdefault("outils", [])
+
+    def _outil(nom: str) -> None:
+        """Enregistre un outil utilisé dans les mesures (sans doublon)."""
+        if mesures is not None and nom not in mesures["outils"]:
+            mesures["outils"].append(nom)
     # 0. Confirmation en attente (étape 5, écran) : le tour précédent a
     #    demandé « Je peux regarder ton écran ? ». Seul un « oui » court,
     #    vérifié en code, déclenche la capture. Toute autre phrase annule
@@ -1155,6 +1331,7 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
         confirmation.clear()
         if est_confirmation_courte(transcription):
             if en_attente["outil"] == "decrire_ecran":
+                _outil("decrire_ecran")
                 description = executer_ecran(
                     en_attente.get("arguments", {}), config)
                 if description.startswith("<untrusted_data"):
@@ -1167,6 +1344,7 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
     # 1. Chemins rapides : minuteur, écran, navigateur (sans appel LLM).
     demande = detecter_minuteur(transcription)
     if demande is not None:
+        _outil("regler_minuteur")
         return executer_minuteur(demande, donnees)
     demande_ecran = detecter_ecran(transcription)
     if demande_ecran is not None:
@@ -1176,6 +1354,7 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
         return "Je peux regarder ton écran, Julien ? Dis-moi simplement oui."
     demande_navigateur = detecter_ouverture(transcription)
     if demande_navigateur is not None:
+        _outil("ouvrir_navigateur")
         return executer_navigateur(demande_navigateur, session_navigateur,
                                    config)
 
@@ -1192,12 +1371,25 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
                   OUTIL_NAVIGATEUR_ANTHROPIC]
     try:
         for _ in range(int(config["max_tours_outils"])):
+            debut_llm = time.monotonic()
             reponse = cerveau.repondre(messages, outils)
+            if mesures is not None:
+                mesures["llm_s"] = round(
+                    mesures.get("llm_s", 0.0)
+                    + (time.monotonic() - debut_llm), 3)
+                utilisation = reponse.get("utilisation", {}) or {}
+                mesures["entree_tokens"] = (
+                    mesures.get("entree_tokens", 0)
+                    + int(utilisation.get("entree", 0) or 0))
+                mesures["sortie_tokens"] = (
+                    mesures.get("sortie_tokens", 0)
+                    + int(utilisation.get("sortie", 0) or 0))
             messages.append(cerveau.message_assistant(reponse))
             if not reponse["appels_outils"]:
                 return reponse["texte"].strip() or (
                     "Je n'ai pas de réponse, Julien.")
             for appel in reponse["appels_outils"]:
+                _outil(appel["nom"])
                 args = appel["arguments"] or {}
                 if appel["nom"] == "regler_minuteur":
                     demande_outil = {
@@ -1256,6 +1448,8 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
     except Exception as erreur:
         message = str(erreur)
         print(f"Erreur du cerveau : {message}", file=sys.stderr)
+        if mesures is not None:
+            mesures["erreur"] = (message or "erreur inconnue")[:120]
         if "429" in message or "rate" in message.lower():
             return ("Je suis limité en ce moment, Julien — le palier "
                     "gratuit me fait attendre. Réessaie dans quelques "
@@ -1318,6 +1512,16 @@ def verifier(config: dict) -> int:
     ligne_optionnel(SCRIPT_NAVIGATEUR.exists(), "scripts/navigateur.py")
     ligne_optionnel(SCRIPT_HUD.exists(),
                     "scripts/hud.py (étape 6, anneau d'état)")
+    ligne_optionnel(SCRIPT_APP.exists(),
+                    "scripts/app.py (étape 7, fenêtre moderne)")
+    try:
+        (RACINE / "logs").mkdir(parents=True, exist_ok=True)
+        ligne_optionnel(os.access(RACINE / "logs", os.W_OK),
+                        "dossier logs/ en écriture (journal des tours)")
+    except OSError as erreur:
+        ligne_optionnel(False,
+                        "dossier logs/ en écriture (journal des tours)",
+                        str(erreur))
     for module in ("PIL", "playwright"):
         try:
             __import__(module)
@@ -1417,12 +1621,23 @@ def main() -> int:
         # aboutir à une confirmation : la question est posée, puis
         # l'utilisateur utilise scripts/yeux.py directement.
         session_texte = SessionNavigateur()
+        bilan = _nouveau_bilan(config, "texte")
+        debut_tour = time.monotonic()
         try:
             reponse = traiter_tour(args.texte, config, cerveau, [],
-                                   args.donnees, {}, session_texte)
+                                   args.donnees, {}, session_texte,
+                                   mesures=bilan)
             journaliser_echange(args.texte, reponse)
         finally:
             session_texte.fermer()
+        bilan["premier_token_s"] = bilan.get("llm_s")
+        bilan["total_s"] = round(time.monotonic() - debut_tour, 3)
+        bilan["cout_estime_usd"] = estimer_cout_usd(
+            bilan["fournisseur"], bilan["entree_tokens"],
+            bilan["sortie_tokens"])
+        bilan["cout_estime_gbp"] = round(
+            bilan["cout_estime_usd"] * TAUX_USD_GBP, 6)
+        journaliser_tour(bilan)
         print(f"Jarvis : {reponse}")
         return 0
 
@@ -1454,6 +1669,8 @@ def main() -> int:
     print("Boucle vocale Jarvis — prête.")
     print("Maintenez F9 pour parler, relâchez pour envoyer.")
     print("F9 pendant une réponse l'interrompt. Ctrl+C pour quitter.")
+    print("Ou écrivez dans l'application (champ de saisie) : la boucle "
+          "répond de la même façon, à voix haute.")
     print("Pensez à lancer la surveillance des minuteurs dans une autre "
           "fenêtre pour que les alarmes sonnent :")
     print("  python scripts\\minuteur.py surveiller")
@@ -1511,10 +1728,12 @@ def main() -> int:
     ecrire_etat_hud("repos")  # Étape 6 : le HUD reflète l'état.
     try:
         while True:
-            # Attente d'un déclenchement : F9 (événement) ou clic maintenu
+            # Attente d'un déclenchement : F9 (événement), clic maintenu
             # sur l'anneau du HUD (fichier data/hud-ptt.json, sondé
-            # toutes les 0,2 s — étape 6).
+            # toutes les 0,2 s — étape 6) ou message tapé dans
+            # l'application (data/texte-demande.json — étape 7.1).
             demarrage_hud = False
+            texte_demande = None
             while True:
                 if evenement_presse.wait(timeout=0.2):
                     evenement_presse.clear()
@@ -1522,55 +1741,93 @@ def main() -> int:
                 if ptt_nouveau_clic() and etat["phase"] == "repos":
                     demarrage_hud = True
                     break
+                texte_demande = lire_demande_texte()
+                if texte_demande is not None:
+                    break
             if etat["phase"] != "repos":
                 continue
-            etat["phase"] = "enregistrement"
-            evenement_relache.clear()
-            ecrire_etat_hud("ecoute")
-            print("🎙️  J'écoute… (relâchez F9 pour envoyer)", flush=True)
-            try:
-                octets, duree = enregistrer_jusqu_a_relache(
-                    evenement_relache,
-                    float(config["duree_max_enregistrement"]),
-                    verifier_ptt=lire_ptt_hud if demarrage_hud else None)
-            except Exception as erreur:
-                print(f"Erreur micro : {erreur}", file=sys.stderr)
-                ecrire_etat_hud("erreur", erreur="Micro indisponible")
-                etat["phase"] = "repos"
-                continue
-            etat["phase"] = "traitement"
-            if duree < float(config["duree_min_enregistrement"]):
-                print("Trop court, ignoré.")
-                ecrire_etat_hud("repos")
-                etat["phase"] = "repos"
-                continue
-            try:
-                transcription = transcripteur.transcrire(octets)
-            except Exception as erreur:
-                print(f"Erreur de transcription : {erreur}", file=sys.stderr)
-                print("Réessayez en maintenant F9 un peu plus longtemps.")
-                ecrire_etat_hud("erreur", erreur="Transcription impossible")
-                etat["phase"] = "repos"
-                continue
-            if not transcription.strip():
-                print("Je n'ai rien compris — réessayez.")
-                ecrire_etat_hud("repos")
-                etat["phase"] = "repos"
-                continue
-            print(f"Julien : {transcription}")
-            ecrire_etat_hud("reflexion", transcription=transcription)
+            # Bilan du tour (journal des tours, étape 7.1) ; t_liberation
+            # est le point de départ des durées « premier audio » et
+            # « total » (ce que Julien attend vraiment).
+            t_liberation = time.monotonic()
+            bilan = _nouveau_bilan(
+                config, "texte" if texte_demande is not None else "voix")
+            if texte_demande is not None:
+                # Tour texte : pas d'enregistrement ni de transcription —
+                # le message tapé est traité comme une phrase entendue.
+                transcription = texte_demande
+                bilan["enregistrement_s"] = 0.0
+                bilan["transcription_s"] = 0.0
+                etat["phase"] = "traitement"
+                print(f"Julien (texte) : {transcription}")
+                ecrire_etat_hud("reflexion", transcription=transcription)
+            else:
+                etat["phase"] = "enregistrement"
+                evenement_relache.clear()
+                ecrire_etat_hud("ecoute")
+                print("🎙️  J'écoute… (relâchez F9 pour envoyer)", flush=True)
+                try:
+                    octets, duree = enregistrer_jusqu_a_relache(
+                        evenement_relache,
+                        float(config["duree_max_enregistrement"]),
+                        verifier_ptt=lire_ptt_hud if demarrage_hud else None)
+                except Exception as erreur:
+                    print(f"Erreur micro : {erreur}", file=sys.stderr)
+                    ecrire_etat_hud("erreur", erreur="Micro indisponible")
+                    etat["phase"] = "repos"
+                    continue
+                t_liberation = time.monotonic()
+                bilan["enregistrement_s"] = round(duree, 3)
+                etat["phase"] = "traitement"
+                if duree < float(config["duree_min_enregistrement"]):
+                    print("Trop court, ignoré.")
+                    ecrire_etat_hud("repos")
+                    etat["phase"] = "repos"
+                    continue
+                debut_transcription = time.monotonic()
+                try:
+                    transcription = transcripteur.transcrire(octets)
+                except Exception as erreur:
+                    print(f"Erreur de transcription : {erreur}",
+                          file=sys.stderr)
+                    print("Réessayez en maintenant F9 un peu plus longtemps.")
+                    ecrire_etat_hud("erreur",
+                                    erreur="Transcription impossible")
+                    etat["phase"] = "repos"
+                    continue
+                bilan["transcription_s"] = round(
+                    time.monotonic() - debut_transcription, 3)
+                if not transcription.strip():
+                    print("Je n'ai rien compris — réessayez.")
+                    ecrire_etat_hud("repos")
+                    etat["phase"] = "repos"
+                    continue
+                print(f"Julien : {transcription}")
+                ecrire_etat_hud("reflexion", transcription=transcription)
             reponse = traiter_tour(transcription, config, cerveau,
                                    historique, args.donnees,
                                    confirmation_en_attente,
-                                   session_navigateur)
+                                   session_navigateur, mesures=bilan)
             journaliser_echange(transcription, reponse)
             historique.append({"role": "user", "content": transcription})
             historique.append({"role": "assistant", "content": reponse})
             historique = historique[-20:]
+            # Premier jeton ≈ réponse complète (client non diffusant) ;
+            # premier audio = jusqu'au lancement de la lecture vocale.
+            bilan["premier_token_s"] = bilan.get("llm_s")
+            bilan["premier_audio_s"] = round(
+                time.monotonic() - t_liberation, 3)
             etat["phase"] = "parle"
             ecrire_etat_hud("reponse", transcription=transcription)
             evenement_interruption.clear()
             dire(reponse, str(config["langue"]), evenement_interruption)
+            bilan["total_s"] = round(time.monotonic() - t_liberation, 3)
+            bilan["cout_estime_usd"] = estimer_cout_usd(
+                bilan["fournisseur"], bilan["entree_tokens"],
+                bilan["sortie_tokens"])
+            bilan["cout_estime_gbp"] = round(
+                bilan["cout_estime_usd"] * TAUX_USD_GBP, 6)
+            journaliser_tour(bilan)
             ecrire_etat_hud("repos", transcription=transcription)
             etat["phase"] = "repos"
     except KeyboardInterrupt:

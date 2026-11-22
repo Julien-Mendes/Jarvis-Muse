@@ -11,15 +11,21 @@ Ce que montre la fenêtre :
   - En-tête : orbe d'état (repos / écoute / réflexion / réponse / erreur)
     + texte d'état + horloge locale (America/Toronto).
   - Zone de conversation défilante : bulles utilisateur / Jarvis avec
-    horodatage, alimentée par le journal data/conversation.jsonl écrit par
-    la boucle vocale (scripts/boucle_voix.py, étape 7).
+    horodatage, alimentée par le journal du jour
+    (data/conversations/AAAA-MM-JJ.jsonl, écrit par la boucle vocale —
+    étape 7.1 ; ancien data/conversation.jsonl lu en repli).
   - Panneau minuteurs : liste lue dans data/timers.json (lecture seule),
     avec comptes à rebours.
   - Bouton micro à maintenir enfoncé = push-to-talk (même mécanisme que
     le HUD : data/hud-ptt.json) ; bouton « Interrompre » pour couper la
     réponse en cours (comme F9 pendant une réponse).
-  - Menu : Ouvrir le guide, Quitter. Position et taille de la fenêtre
-    mémorisées dans data/app.json.
+  - Champ de saisie + bouton « Envoyer » (étape 7.1) : écrire à Jarvis
+    au lieu de parler — le texte part dans data/texte-demande.json et
+    la boucle le traite comme un tour vocal (réponse affichée et lue
+    à voix haute).
+  - Menu Fichier : Historique (fenêtre séparée, lecture seule, avec
+    recherche), Ouvrir le guide, Quitter. Position et taille de la
+    fenêtre mémorisées dans data/app.json.
 
 L'application n'est qu'une interface : la boucle vocale
 (scripts/boucle_voix.py) doit tourner à côté (ou via
@@ -56,7 +62,11 @@ RACINE = Path(__file__).resolve().parent.parent
 FICHIER_ETAT = RACINE / "data" / "hud-state.json"
 FICHIER_PTT = RACINE / "data" / "hud-ptt.json"
 FICHIER_MINUTEURS = RACINE / "data" / "timers.json"
+DOSSIER_CONVERSATIONS = RACINE / "data" / "conversations"
+# Ancien journal unique (étape 7) : plus écrit par la boucle, lu en repli
+# si le journal du jour n'existe pas encore.
 FICHIER_CONVERSATION = RACINE / "data" / "conversation.jsonl"
+FICHIER_DEMANDE_TEXTE = RACINE / "data" / "texte-demande.json"
 FICHIER_POSITION = RACINE / "data" / "app.json"
 GUIDE = RACINE / "docs" / "etape-7-application.md"
 SCRIPT_BOUCLE = RACINE / "scripts" / "boucle_voix.py"
@@ -270,11 +280,23 @@ def ecrire_ptt(chemin: Path, actif: bool) -> None:
         pass
 
 
-def lire_conversation(chemin: Path = FICHIER_CONVERSATION) -> list:
-    """Lit data/conversation.jsonl ; liste de {"role", "texte", "heure"}.
+def chemin_journal_jour(jour: datetime | None = None) -> Path:
+    """Chemin du journal du jour : data/conversations/AAAA-MM-JJ.jsonl."""
+    ref = jour or datetime.now(FUSEAU)
+    return DOSSIER_CONVERSATIONS / f"{ref.strftime('%Y-%m-%d')}.jsonl"
 
-    Lignes mal formées ignorées. Fichier absent : liste vide.
+
+def lire_conversation(chemin: Path | None = None) -> list:
+    """Lit un journal de conversation ; liste de {"role", "texte", "heure"}.
+
+    Sans chemin : le journal du jour s'il existe, sinon l'ancien journal
+    unique data/conversation.jsonl (étape 7, repli). Lignes mal formées
+    ignorées. Fichier absent : liste vide.
     """
+    if chemin is None:
+        chemin = chemin_journal_jour()
+        if not chemin.exists():
+            chemin = FICHIER_CONVERSATION
     try:
         lignes = chemin.read_text(encoding="utf-8").splitlines()
     except OSError:
@@ -299,6 +321,118 @@ def lire_conversation(chemin: Path = FICHIER_CONVERSATION) -> list:
             "heure": str(donnees.get("heure", "")),
         })
     return entrees
+
+
+JOURS_FR = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi",
+            "dimanche"]
+MOIS_FR = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.",
+           "août", "sept.", "oct.", "nov.", "déc."]
+
+
+def formater_jour(date_iso: str) -> str:
+    """« sam. 21 nov. 2026 » à partir de « 2026-11-21 » ; tel quel sinon."""
+    try:
+        moment = datetime.strptime(date_iso, "%Y-%m-%d")
+    except ValueError:
+        return date_iso
+    return (f"{JOURS_FR[moment.weekday()][:3]}. {moment.day} "
+            f"{MOIS_FR[moment.month - 1]} {moment.year}")
+
+
+def lister_jours(racine: Path = RACINE) -> list:
+    """Jours avec un journal : [{"date", "chemin", "messages"}].
+
+    Du plus récent au plus ancien. L'ancien journal unique
+    (data/conversation.jsonl, étape 7) apparaît en dernier sous
+    « Ancien journal » s'il contient des messages. Dossier absent :
+    liste vide.
+    """
+    jours = []
+    dossier = racine / "data" / "conversations"
+    try:
+        fichiers = sorted(dossier.glob("????-??-??.jsonl"), reverse=True)
+    except OSError:
+        fichiers = []
+    for fichier in fichiers:
+        entrees = lire_conversation(fichier)
+        if entrees:
+            jours.append({"date": fichier.stem, "chemin": fichier,
+                          "messages": len(entrees)})
+    try:
+        anciennes = lire_conversation(FICHIER_CONVERSATION)
+    except OSError:
+        anciennes = []
+    if anciennes:
+        jours.append({"date": "Ancien journal",
+                      "chemin": FICHIER_CONVERSATION,
+                      "messages": len(anciennes)})
+    return jours
+
+
+def filtrer_entrees(entrees: list, requete: str) -> list:
+    """Filtre des entrées de conversation par texte (insensible à la casse).
+
+    Requête vide : toutes les entrées. La recherche porte sur le texte
+    des messages, pas sur les rôles ni les heures.
+    """
+    requete = (requete or "").strip().lower()
+    if not requete:
+        return list(entrees)
+    return [e for e in entrees if requete in str(e.get("texte", "")).lower()]
+
+
+def ecrire_demande_texte(chemin: Path, texte: str) -> None:
+    """Écrit une demande texte pour la boucle (data/texte-demande.json).
+
+    {"texte": ..., "horodatage": "ISO"} — écriture atomique (fichier
+    temporaire + os.replace). La boucle vocale le sonde toutes les
+    0,2 s et le consomme (le fichier est supprimé à la lecture). Toute
+    erreur est silencieuse : l'envoi ne doit jamais faire planter
+    l'application.
+    """
+    try:
+        chemin.parent.mkdir(parents=True, exist_ok=True)
+        donnees = {
+            "texte": str(texte),
+            "horodatage": datetime.now(FUSEAU).isoformat(timespec="seconds"),
+        }
+        temporaire = chemin.with_suffix(".json.tmp")
+        temporaire.write_text(
+            json.dumps(donnees, ensure_ascii=False), encoding="utf-8")
+        os.replace(temporaire, chemin)
+    except OSError:
+        pass
+
+
+def ajouter_bulle(conteneur, entree: dict, wraplength: int):
+    """Crée une bulle (utilisateur à droite, Jarvis à gauche) dans un
+    conteneur ; retourne l'étiquette du texte (pour ajuster le retour à
+    la ligne au redimensionnement)."""
+    if entree["role"] == "user":
+        couleur_bulle = COULEUR_BULLE_UTILISATEUR
+        ancre = "e"
+        marges = (70, 6)
+    else:
+        couleur_bulle = COULEUR_BULLE_JARVIS
+        ancre = "w"
+        marges = (6, 70)
+    cadre = ctk.CTkFrame(conteneur, fg_color=couleur_bulle,
+                         corner_radius=12)
+    cadre.pack(anchor=ancre, padx=marges, pady=4)
+    etiquette = ctk.CTkLabel(
+        cadre, text=entree["texte"],
+        font=ctk.CTkFont(family="Segoe UI", size=13),
+        text_color=COULEUR_TEXTE, wraplength=wraplength,
+        justify="left", anchor="w")
+    etiquette.pack(fill="x", padx=12, pady=(8, 0))
+    heure = formater_heure(entree["heure"])
+    if heure:
+        ctk.CTkLabel(
+            cadre, text=heure,
+            font=ctk.CTkFont(family="Segoe UI", size=10),
+            text_color=COULEUR_TEXTE_FAIBLE, anchor="e").pack(
+                fill="x", padx=12, pady=(2, 6))
+    return etiquette
 
 
 def formater_heure(heure_iso: str) -> str:
@@ -367,11 +501,13 @@ def sauvegarder_geometrie(racine: Path, geometrie: str) -> None:
 # ---------------------------------------------------------------------------
 
 class Application:
-    """Fenêtre Jarvis : orbe d'état, conversation, minuteurs, micro.
+    """Fenêtre Jarvis : orbe d'état, conversation, minuteurs, micro,
+    saisie texte et fenêtre Historique séparée.
 
     Bouton micro maintenu = push-to-talk (équivalent F9). Bouton
     « Interrompre » = impulsion courte sur data/hud-ptt.json, qui coupe
-    la réponse en cours (comme F9 pendant une réponse).
+    la réponse en cours (comme F9 pendant une réponse). Le champ de
+    saisie envoie un message texte à la boucle (data/texte-demande.json).
     """
 
     def __init__(self, racine: Path, config: dict):
@@ -399,10 +535,14 @@ class Application:
         self._etiquettes_bulles: list = []
         self._apres_redimensionnement = None
         self._message_vide = None
+        self._fenetre_historique = None
+        self._historique: dict | None = None
 
         # -- Menu ------------------------------------------------------
         barre_menu = tk.Menu(self.fenetre)
         menu_fichier = tk.Menu(barre_menu, tearoff=0)
+        menu_fichier.add_command(label="Historique…",
+                                 command=self.ouvrir_historique)
         menu_fichier.add_command(label="Ouvrir le guide",
                                  command=self.ouvrir_guide)
         menu_fichier.add_separator()
@@ -510,6 +650,22 @@ class Application:
             text_color=COULEUR_TEXTE_FAIBLE)
         self.texte_astuce.grid(row=1, column=0, columnspan=2, pady=(0, 8))
 
+        # -- Barre du bas : saisie texte (étape 7.1) --------------------
+        self.champ_texte = ctk.CTkEntry(
+            self.barre_bas, placeholder_text="Écrire à Jarvis…",
+            font=ctk.CTkFont(family="Segoe UI", size=13), height=40)
+        self.champ_texte.grid(row=2, column=0, sticky="ew",
+                              padx=(14, 6), pady=(0, 12))
+        self.champ_texte.bind("<Return>", lambda _e: self.envoyer_texte())
+
+        self.bouton_envoyer = ctk.CTkButton(
+            self.barre_bas, text="Envoyer",
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            fg_color=COULEUR_ACCENT, hover_color=COULEUR_ACCENT_SURVOL,
+            text_color="#ffffff", corner_radius=20, height=40,
+            command=self.envoyer_texte)
+        self.bouton_envoyer.grid(row=2, column=1, padx=(6, 14), pady=(0, 12))
+
         self._dessiner_orbe(1.0)
         self.rafraichir()
         self._animer_orbe()
@@ -553,33 +709,9 @@ class Application:
         if self._message_vide is not None:
             self._message_vide.destroy()
             self._message_vide = None
-        role = entree["role"]
-        if role == "user":
-            couleur_bulle = COULEUR_BULLE_UTILISATEUR
-            ancre = "e"
-            marges = (70, 6)
-        else:
-            couleur_bulle = COULEUR_BULLE_JARVIS
-            ancre = "w"
-            marges = (6, 70)
-        cadre = ctk.CTkFrame(
-            self.zone_conversation, fg_color=couleur_bulle,
-            corner_radius=12)
-        cadre.pack(anchor=ancre, padx=marges, pady=4)
-        etiquette = ctk.CTkLabel(
-            cadre, text=entree["texte"],
-            font=ctk.CTkFont(family="Segoe UI", size=13),
-            text_color=COULEUR_TEXTE, wraplength=self._largeur_bulle(),
-            justify="left", anchor="w")
-        etiquette.pack(fill="x", padx=12, pady=(8, 0))
+        etiquette = ajouter_bulle(self.zone_conversation, entree,
+                                  self._largeur_bulle())
         self._etiquettes_bulles.append(etiquette)
-        heure = formater_heure(entree["heure"])
-        if heure:
-            ctk.CTkLabel(
-                cadre, text=heure,
-                font=ctk.CTkFont(family="Segoe UI", size=10),
-                text_color=COULEUR_TEXTE_FAIBLE, anchor="e").pack(
-                    fill="x", padx=12, pady=(2, 6))
         self._entrees_affichees.append(entree)
 
     def _largeur_bulle(self) -> int:
@@ -619,7 +751,8 @@ class Application:
         self._message_vide = ctk.CTkLabel(
             self.zone_conversation,
             text="Aucune conversation pour l'instant.\n"
-                 "Maintenez F9 (ou le bouton micro) pour parler à Jarvis.",
+                 "Maintenez F9 (ou le bouton micro) pour parler à Jarvis,\n"
+                 "ou écrivez votre message ci-dessous.",
             font=ctk.CTkFont(family="Segoe UI", size=13),
             text_color=COULEUR_TEXTE_FAIBLE, justify="center")
         self._message_vide.pack(pady=40)
@@ -658,6 +791,146 @@ class Application:
         cours (la boucle ne réagit qu'au front montant, comme F9)."""
         ecrire_ptt(FICHIER_PTT, True)
         self.fenetre.after(400, lambda: ecrire_ptt(FICHIER_PTT, False))
+
+    def envoyer_texte(self) -> None:
+        """Envoie le texte tapé à la boucle (data/texte-demande.json).
+
+        La boucle le traite comme un tour vocal : réponse affichée dans
+        la conversation et lue à voix haute. Si la boucle ne tourne pas,
+        la demande expire après 5 minutes (elle est alors ignorée) —
+        la boucle doit tourner pour que le message reçoive une réponse.
+        """
+        texte = self.champ_texte.get().strip()
+        if not texte:
+            return
+        ecrire_demande_texte(FICHIER_DEMANDE_TEXTE, texte)
+        self.champ_texte.delete(0, "end")
+
+    # -- Historique (fenêtre séparée, lecture seule) -------------------
+
+    def ouvrir_historique(self) -> None:
+        """Ouvre la fenêtre Historique (jours + recherche + relecture).
+
+        Fenêtre séparée de l'écran principal : liste des jours (du plus
+        récent au plus ancien), champ de recherche qui filtre les
+        messages du jour affiché, conversation en lecture seule. Si la
+        fenêtre est déjà ouverte, elle est simplement ramenée au premier
+        plan.
+        """
+        existante = getattr(self, "_fenetre_historique", None)
+        if existante is not None:
+            try:
+                if existante.winfo_exists():
+                    existante.lift()
+                    existante.focus()
+                    return
+            except Exception:
+                pass
+        fenetre = ctk.CTkToplevel(self.fenetre)
+        fenetre.title("Historique — Jarvis")
+        fenetre.geometry("820x600")
+        fenetre.minsize(560, 400)
+        self._fenetre_historique = fenetre
+        self._historique = {"jours": lister_jours(self.racine),
+                            "courant": None, "entrees": []}
+
+        fenetre.grid_rowconfigure(1, weight=1)
+        fenetre.grid_columnconfigure(1, weight=1)
+
+        # Recherche (filtre les messages du jour affiché).
+        self._champ_recherche = ctk.CTkEntry(
+            fenetre, placeholder_text="Rechercher dans la conversation…",
+            font=ctk.CTkFont(family="Segoe UI", size=13), height=36)
+        self._champ_recherche.grid(row=0, column=0, columnspan=2,
+                                   sticky="ew", padx=10, pady=10)
+        self._champ_recherche.bind(
+            "<KeyRelease>", lambda _e: self._afficher_jour_historique())
+
+        # Liste des jours (à gauche).
+        self._liste_jours = ctk.CTkScrollableFrame(
+            fenetre, fg_color=COULEUR_PANNEAU, corner_radius=12,
+            scrollbar_button_color=COULEUR_BARRE_DEFILEMENT, width=200)
+        self._liste_jours.grid(row=1, column=0, sticky="nsew",
+                               padx=(10, 4), pady=(0, 10))
+        for jour in self._historique["jours"]:
+            libelle = formater_jour(jour["date"])
+            if jour["date"] != "Ancien journal":
+                libelle = (f"{libelle}\n{jour['messages']} message"
+                           + ("s" if jour["messages"] > 1 else ""))
+            else:
+                libelle = (f"Ancien journal\n{jour['messages']} message"
+                           + ("s" if jour["messages"] > 1 else ""))
+            ctk.CTkButton(
+                self._liste_jours, text=libelle,
+                font=ctk.CTkFont(family="Segoe UI", size=12),
+                fg_color="transparent", hover_color="#23232f",
+                text_color=COULEUR_TEXTE, anchor="w",
+                command=lambda j=jour: self._choisir_jour_historique(j)
+            ).pack(fill="x", padx=6, pady=3)
+        if not self._historique["jours"]:
+            ctk.CTkLabel(
+                self._liste_jours, text="Aucun historique pour l'instant.",
+                font=ctk.CTkFont(family="Segoe UI", size=12),
+                text_color=COULEUR_TEXTE_FAIBLE, wraplength=180,
+                justify="left").pack(padx=8, pady=10)
+
+        # Conversation du jour (à droite, lecture seule).
+        self._zone_historique = ctk.CTkScrollableFrame(
+            fenetre, fg_color=COULEUR_FOND, corner_radius=0,
+            scrollbar_button_color=COULEUR_BARRE_DEFILEMENT)
+        self._zone_historique.grid(row=1, column=1, sticky="nsew",
+                                   padx=(4, 10), pady=(0, 10))
+
+        bouton_fermer = ctk.CTkButton(
+            fenetre, text="Fermer",
+            font=ctk.CTkFont(family="Segoe UI", size=13),
+            fg_color=COULEUR_ACCENT, hover_color=COULEUR_ACCENT_SURVOL,
+            text_color="#ffffff", corner_radius=20, height=36,
+            command=fenetre.destroy)
+        bouton_fermer.grid(row=2, column=0, columnspan=2, pady=(0, 10))
+
+        fenetre.protocol(
+            "WM_DELETE_WINDOW",
+            lambda: (setattr(self, "_fenetre_historique", None),
+                     fenetre.destroy()))
+        if self._historique["jours"]:
+            self._choisir_jour_historique(self._historique["jours"][0])
+
+    def _choisir_jour_historique(self, jour: dict) -> None:
+        """Charge un jour dans la fenêtre Historique."""
+        self._historique["courant"] = jour
+        self._historique["entrees"] = lire_conversation(jour["chemin"])
+        self._afficher_jour_historique()
+
+    def _afficher_jour_historique(self) -> None:
+        """Affiche le jour courant (filtré par la recherche, le cas échéant)."""
+        zone = getattr(self, "_zone_historique", None)
+        if zone is None:
+            return
+        for enfant in zone.winfo_children():
+            enfant.destroy()
+        requete = ""
+        try:
+            requete = self._champ_recherche.get()
+        except Exception:
+            pass
+        entrees = filtrer_entrees(self._historique["entrees"], requete)
+        if not entrees:
+            texte = ("Aucun message ce jour-là."
+                     if not requete
+                     else "Aucun message ne contient cette recherche.")
+            ctk.CTkLabel(
+                zone, text=texte,
+                font=ctk.CTkFont(family="Segoe UI", size=13),
+                text_color=COULEUR_TEXTE_FAIBLE,
+                justify="center").pack(pady=40)
+            return
+        for entree in entrees:
+            ajouter_bulle(zone, entree, 520)
+        try:
+            zone._parent_canvas.yview_moveto(1.0)
+        except Exception:
+            pass
 
     # -- Menu ----------------------------------------------------------
 
@@ -748,7 +1021,7 @@ class Application:
             self._rafraichir_minuteurs(minuteurs, maintenant)
 
             # Conversation : ajouts, ou reconstruction si le journal a
-            # raccourci (plafond de 200 lignes atteint).
+            # raccourci (changement de jour : nouveau fichier).
             affichees = self._entrees_affichees
             if (len(entrees) < len(affichees)
                     or entrees[:len(affichees)] != affichees):
@@ -818,9 +1091,11 @@ def verifier(config: dict) -> int:
     ligne(bool(config.get("active", True)), "Application activée ([app] active)",
           "mettre active = true dans config.toml" if not config.get(
               "active", True) else "")
-    if not FICHIER_CONVERSATION.exists():
-        print("  [INFO]   data/conversation.jsonl absent — il sera créé "
-              "par la boucle vocale au premier tour.")
+    if not (DOSSIER_CONVERSATIONS.exists()
+            or FICHIER_CONVERSATION.exists()):
+        print("  [INFO]   aucun journal de conversation — il sera créé "
+              "par la boucle vocale au premier tour "
+              "(data/conversations/AAAA-MM-JJ.jsonl).")
     print()
     if problemes:
         print(f"{len(problemes)} élément(s) à régler : "

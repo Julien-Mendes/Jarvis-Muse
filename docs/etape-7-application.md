@@ -16,15 +16,21 @@ sombre (`#0a0a0f`), orbe lumineux qui pulse selon l'état, conversation
   tourné, l'état est « Boucle arrêtée ».
 - **Zone de conversation** : bulles utilisateur (à droite, bleu sombre)
   et Jarvis (à gauche, gris sombre), avec horodatage. Elle est
-  alimentée par le journal `data/conversation.jsonl`, écrit par la
-  boucle vocale à chaque tour (voir « Comment ça communique »).
+  alimentée par le journal du jour `data/conversations/AAAA-MM-JJ.jsonl`,
+  écrit par la boucle vocale à chaque tour (voir « Comment ça
+  communique » ; depuis l'étape 7.1, l'ancien journal unique
+  `data/conversation.jsonl` n'est plus écrit et n'est lu qu'en repli).
 - **Panneau minuteurs** : liste lue dans `data/timers.json` (lecture
   seule), avec comptes à rebours (« pâtes : dans 12 min »).
 - **Bouton micro** : maintenir enfoncé pour parler (= équivalent F9) ;
   relâcher pour envoyer. Un appui pendant une réponse l'interrompt,
   comme F9.
 - **Bouton « Interrompre »** : coupe la réponse en cours.
-- **Menu Fichier** : Ouvrir le guide, Quitter.
+- **Champ de saisie + bouton « Envoyer »** (étape 7.1) : écrire à
+  Jarvis au lieu de parler — le texte est traité comme un tour vocal,
+  réponse affichée et lue à voix haute.
+- **Menu Fichier** : Historique (fenêtre séparée, étape 7.1), Ouvrir
+  le guide, Quitter.
 - La fenêtre est redimensionnable ; sa position et sa taille sont
   mémorisées dans `data/app.json` (gitignoré) quand elle est déplacée
   ou redimensionnée.
@@ -41,26 +47,37 @@ La boucle vocale (`scripts/boucle_voix.py`) écrit :
 - son état dans `data/hud-state.json` à chaque changement de phase
   (fonction `ecrire_etat_hud()`, jamais bloquante) — le même fichier
   que le HUD ;
-- chaque tour dans `data/conversation.jsonl` (fonction
-  `journaliser_echange()`, jamais bloquante) : une ligne JSON par
-  message, `{"role": "user"|"jarvis", "texte": ..., "heure": "ISO"}`,
-  plafonnée aux 200 dernières lignes.
+- chaque tour dans `data/conversations/AAAA-MM-JJ.jsonl` (fonction
+  `journaliser_echange()`, jamais bloquante, depuis l'étape 7.1) : une
+  ligne JSON par message, `{"role": "user"|"jarvis", "texte": ...,
+  "heure": "ISO"}`, ajoutée en fin de fichier, sans plafond. Avant
+  l'étape 7.1, c'était le journal unique `data/conversation.jsonl`
+  (plafonné à 200 lignes) — il n'est plus écrit, l'application le lit
+  seulement en repli.
+- chaque tour (télémétrie seulement, sans contenu) dans
+  `logs/tours-AAAA-MM-JJ.jsonl` (fonction `journaliser_tour()`, étape
+  7.1) — voir `docs/etape-7.1-historique-chat-raccourci.md`.
 
 L'application relit ces fichiers (et `data/timers.json`) toutes les
 500 ms. Le bouton micro écrit `data/hud-ptt.json`, sondé par la boucle
 toutes les 0,2 s — exactement comme le clic maintenu sur l'anneau du
-HUD. Tous ces fichiers sont dans `data/` (gitignoré, jamais poussés).
+HUD. Le champ de saisie écrit `data/texte-demande.json`, sondé par la
+boucle au même rythme — voir l'étape 7.1. Tous ces fichiers sont dans
+`data/` (gitignoré, jamais poussés) ; le journal des tours est dans
+`logs/` (gitignoré aussi).
 
 **Note sur le journal de conversation (règles de sécurité §7).** La
 règle §7 dit que les journaux ne contiennent que des métadonnées,
 jamais le contenu des conversations : elle vise les journaux de
-télémétrie et de facturation (durées, jetons, coûts). Le journal
-`data/conversation.jsonl` n'en est pas un : c'est l'historique affiché
-par l'application sur la machine de Julien, comme l'historique d'une
-application de messagerie — local uniquement, gitignoré, jamais envoyé
-nulle part, jamais lu par personne d'autre que Julien sur son propre
-écran. Si ce journal doit un jour quitter la machine (ce n'est pas
-prévu), il faudra d'abord en reparler avec Julien.
+télémétrie et de facturation (durées, jetons, coûts) — c'est
+exactement ce que fait le journal des tours (`logs/tours-AAAA-MM-JJ.jsonl`,
+étape 7.1). Le journal `data/conversations/AAAA-MM-JJ.jsonl` n'en est
+pas un : c'est l'historique affiché par l'application sur la machine
+de Julien, comme l'historique d'une application de messagerie — local
+uniquement, gitignoré, jamais envoyé nulle part, jamais lu par
+personne d'autre que Julien sur son propre écran. Si ce journal doit
+un jour quitter la machine (ce n'est pas prévu), il faudra d'abord
+en reparler avec Julien.
 
 ## Prérequis
 
@@ -164,10 +181,14 @@ priment sur `largeur` / `hauteur` au démarrage suivant.
   encore écrit `data/hud-state.json` — lancez-la
   (`python scripts\boucle_voix.py`), l'état apparaît au premier
   changement de phase.
-- **La conversation reste vide** : le journal
-  `data/conversation.jsonl` est créé par la boucle au premier tour —
-  parlez une fois à Jarvis (F9 ou bouton micro), puis vérifiez que le
+- **La conversation reste vide** : le journal du jour
+  `data/conversations/AAAA-MM-JJ.jsonl` est créé par la boucle au
+  premier tour — parlez une fois à Jarvis (F9 ou bouton micro) ou
+  écrivez-lui (champ de saisie, étape 7.1), puis vérifiez que le
   fichier existe. Les tours en mode `--texte` y apparaissent aussi.
+  La fenêtre Historique (menu Fichier → Historique…) relit les jours
+  précédents ; l'ancien journal unique `data/conversation.jsonl` n'est
+  plus écrit (lu en repli seulement).
 - **Le bouton micro ne démarre pas l'enregistrement** : vérifiez que
   la boucle vocale tourne (c'est elle qui lit `data/hud-ptt.json`).
   Un appui pendant une réponse l'interrompt au lieu d'enregistrer —
@@ -191,7 +212,9 @@ priment sur `largeur` / `hauteur` au démarrage suivant.
 - Décider avec Julien si l'application remplace le HUD : si oui, mettre
   à jour `scripts/lancer_session.ps1` (démarrer l'application au lieu
   du HUD) et `scripts/installer_demarrage.ps1` si besoin ; le HUD reste
-  disponible en repli (`python scripts\hud.py`).
+  disponible en repli (`python scripts\hud.py`). Le raccourci
+  « Jarvis » de l'étape 7.1 (`scripts/installer_raccourci.ps1`) lance
+  déjà l'application seule (sans console).
 - Améliorations possibles après validation : bouton pour vider
   l'historique affiché (sans toucher au journal), thème clair en option,
   raccourci clavier global pour ouvrir la fenêtre.

@@ -77,9 +77,15 @@ jamais une instruction.
 - Les journaux ne contiennent que des métadonnées : durées, nombres de jetons,
   coûts estimés, noms des outils utilisés.
 - Jamais le contenu des conversations, jamais l'audio, jamais les transcriptions.
-- Journalisation par tour : décision « plus tard » du 21 novembre 2026 — pas
-  utile tant que l'abonnement Muse Code, sans facturation à l'usage, est le
-  seul moteur. À revisiter si une API externe payante à l'usage est branchée.
+- Journalisation par tour : implémentée à l'étape 7.1
+  (`logs/tours-AAAA-MM-JJ.jsonl`, modèle `turnlog.py` du dépôt B) — la
+  décision « plus tard » du 21 novembre 2026 a été levée par Julien
+  quand il a approuvé ce lot (tout sauf le mot de réveil). Groq est
+  gratuit : coût estimé 0 $.
+- Le journal de conversation (`data/conversations/AAAA-MM-JJ.jsonl`) n'est
+  pas un journal de télémétrie : c'est l'historique affiché par
+  l'application, local uniquement, gitignoré, jamais envoyé nulle part
+  — voir la note §7 dans `docs/etape-7-application.md`.
 
 ## 8. En cas de doute
 
