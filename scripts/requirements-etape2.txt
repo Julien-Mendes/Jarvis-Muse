@@ -1,0 +1,4 @@
+# Dépendances de l'Étape 2 — Voix locale (Piper)
+# Installer avec : pip install -r scripts/requirements-etape2.txt
+# Versions souples : le script n'utilise que l'API stable de piper-tts.
+piper-tts>=1.2

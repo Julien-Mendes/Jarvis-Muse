@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+"""lire_voix.py — Lire un texte à voix haute avec Piper (TTS 100 % local).
+
+Usage :
+    python scripts/lire_voix.py --texte "Bonjour Julien."
+    python scripts/lire_voix.py --fichier a-dire/resume.txt
+    python scripts/lire_voix.py --texte "Hello." --langue en
+
+Tout se passe sur la machine : aucune donnée ne quitte le poste, aucun appel
+réseau. Les voix sont téléchargées une seule fois (voir docs/etape-2-voix.md).
+
+Voix par défaut (décisions du 21 nov. 2026) :
+  - français : Piper « gilles » (masculine, licence libre CC0).
+    Kokoro n'a qu'une seule voix française, féminine (ff_siwis).
+  - anglais : Piper « alan » (masculine britannique).
+"""
+
+import argparse
+import sys
+import tempfile
+import time
+import wave
+from pathlib import Path
+
+# Voix par défaut par langue.
+VOIX_DEFAUT = {
+    "fr": "fr_FR-gilles-low",    # Piper, masculine, licence libre CC0.
+    "en": "en_GB-alan-medium",   # Piper, masculine britannique.
+}
+
+
+def trouver_modele(dossier_modeles: Path, nom_voix: str):
+    """Cherche le modèle .onnx (et son fichier .json) dans le dossier des modèles.
+
+    Le dossier peut être plat ou organisé en sous-dossiers : la recherche est
+    récursive pour rester compatible avec la façon dont les voix sont
+    téléchargées (voir docs/etape-2-voix.md).
+    """
+    for chemin in sorted(dossier_modeles.rglob(f"{nom_voix}.onnx")):
+        config = chemin.with_suffix(".onnx.json")
+        if config.exists():
+            return chemin, config
+    return None, None
+
+
+def synthetiser(texte: str, chemin_modele: Path, chemin_config: Path, vitesse: float):
+    """Synthétise le texte et retourne (fréquence d'échantillonnage, audio brut)."""
+    from piper import PiperVoice
+
+    voix = PiperVoice.load(str(chemin_modele), str(chemin_config))
+    # Piper : length_scale < 1 = plus rapide, > 1 = plus lent.
+    echelle = 1.0 / vitesse
+    morceaux = []
+    frequence = None
+    for morceau in voix.synthesize(texte, length_scale=echelle):
+        frequence = morceau.sample_rate
+        morceaux.append(morceau.audio_int16_bytes)
+    return frequence, b"".join(morceaux)
+
+
+def ecrire_wav(chemin: Path, frequence: int, donnees: bytes) -> None:
+    """Écrit l'audio brut (16 bits, mono) dans un fichier WAV."""
+    with wave.open(str(chemin), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(frequence)
+        wav.writeframes(donnees)
+
+
+def jouer_wav(chemin_wav: Path) -> None:
+    """Joue un fichier WAV sur la sortie audio par défaut (Windows)."""
+    if sys.platform != "win32":
+        print(f"Fichier audio enregistré : {chemin_wav}")
+        print("Lecture automatique disponible seulement sous Windows pour l'instant.")
+        return
+    import winsound
+
+    with wave.open(str(chemin_wav), "rb") as wav:
+        duree = wav.getnframes() / wav.getframerate()
+    winsound.PlaySound(
+        str(chemin_wav), winsound.SND_FILENAME | winsound.SND_ASYNC
+    )
+    time.sleep(duree + 0.5)  # Laisser le temps à la lecture de se terminer.
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Lit un texte à voix haute avec Piper (TTS local, hors ligne)."
+    )
+    groupe = parser.add_mutually_exclusive_group(required=True)
+    groupe.add_argument("--texte", help="Texte à lire à voix haute.")
+    groupe.add_argument("--fichier", help="Fichier texte (.txt) à lire à voix haute.")
+    parser.add_argument(
+        "--langue", choices=["fr", "en"], default="fr",
+        help="Langue du texte (défaut : fr).",
+    )
+    parser.add_argument(
+        "--voix", default=None,
+        help="Nom de la voix Piper (défaut : fr_FR-gilles-low en fr, "
+        "en_GB-alan-medium en en).",
+    )
+    parser.add_argument(
+        "--vitesse", type=float, default=1.0,
+        help="Vitesse de lecture, 0.5 à 2.0 (défaut : 1.0).",
+    )
+    parser.add_argument(
+        "--dossier-modeles", type=Path, default=None,
+        help="Dossier des voix téléchargées (défaut : models/ à la racine du dépôt).",
+    )
+    parser.add_argument(
+        "--sortie", type=Path, default=None,
+        help="Enregistrer l'audio dans ce fichier .wav au lieu de le jouer.",
+    )
+    args = parser.parse_args()
+
+    if not 0.5 <= args.vitesse <= 2.0:
+        print("Erreur : --vitesse doit être entre 0.5 et 2.0.", file=sys.stderr)
+        return 1
+
+    # Texte à lire.
+    if args.fichier:
+        chemin_texte = Path(args.fichier)
+        if not chemin_texte.exists():
+            print(f"Erreur : fichier introuvable : {chemin_texte}", file=sys.stderr)
+            return 1
+        texte = chemin_texte.read_text(encoding="utf-8").strip()
+    else:
+        texte = args.texte.strip()
+    if not texte:
+        print("Erreur : le texte à lire est vide.", file=sys.stderr)
+        return 1
+
+    # Voix à utiliser.
+    nom_voix = args.voix or VOIX_DEFAUT[args.langue]
+    racine = Path(__file__).resolve().parent.parent
+    dossier_modeles = args.dossier_modeles or (racine / "models")
+    chemin_modele, chemin_config = trouver_modele(dossier_modeles, nom_voix)
+    if chemin_modele is None:
+        print(f"Erreur : voix « {nom_voix} » introuvable dans {dossier_modeles}.",
+              file=sys.stderr)
+        print("Téléchargez-la avec :", file=sys.stderr)
+        print(f"  python -m piper.download_voices {nom_voix} "
+              f"--data-dir {dossier_modeles}", file=sys.stderr)
+        print("Voir docs/etape-2-voix.md pour les détails.", file=sys.stderr)
+        return 2
+
+    # Synthèse.
+    try:
+        frequence, donnees = synthetiser(texte, chemin_modele, chemin_config,
+                                         args.vitesse)
+    except ImportError:
+        print("Erreur : le module piper n'est pas installé.", file=sys.stderr)
+        print("Installez-le avec :", file=sys.stderr)
+        print("  pip install -r scripts/requirements-etape2.txt", file=sys.stderr)
+        return 3
+    if not donnees:
+        print("Erreur : la synthèse n'a produit aucun audio.", file=sys.stderr)
+        return 1
+
+    # Lecture (ou enregistrement).
+    if args.sortie:
+        ecrire_wav(args.sortie, frequence, donnees)
+        print(f"Audio enregistré : {args.sortie}")
+    else:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            chemin_tmp = Path(tmp.name)
+        try:
+            ecrire_wav(chemin_tmp, frequence, donnees)
+            print(f"Lecture avec la voix « {nom_voix} » ({args.langue})…")
+            jouer_wav(chemin_tmp)
+        finally:
+            chemin_tmp.unlink(missing_ok=True)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
