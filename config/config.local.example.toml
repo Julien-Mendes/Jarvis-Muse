@@ -20,3 +20,15 @@ formule_adresse = "Monsieur"
 [applications]
 # Applications à lancer au démarrage de session (lancement de session : à décider).
 # navigateur = "chrome"
+
+[quadrants]
+# Fenêtres en quadrants au lancement de session (bloc 28, validé 21 nov.
+# 2026). Liste des applications À COMPLÉTER AVEC JULIEN — vide par défaut :
+# rien n'est ouvert ni déplacé tant que la liste est vide.
+actif = false
+# Exemple (à compléter avec Julien) :
+# apps = [
+#   { nom = "Code", processus = "Code", quadrant = "haut-gauche" },
+#   { nom = "Chrome", processus = "chrome", quadrant = "bas-gauche" },
+# ]
+apps = []

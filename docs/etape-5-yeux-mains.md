@@ -42,18 +42,18 @@ navigateur ».
 Le fournisseur de vision se choisit dans `config.toml`, section `[yeux]`,
 clé `fournisseur_vision` — jamais en dur dans le code.
 
-- **Défaut : `anthropic`** (Claude Haiku, vision confirmée, payant à
+- **Défaut : `groq`** (`qwen/qwen3.8-27b`, multimodal — un seul service,
+  Groq, pour cerveau + STT + vision, décision de Julien le 21 nov. 2026).
+  Llama 4 Scout (`meta-llama/llama-4-scout-17b-16e-instruct`) a été
+  **retiré du palier gratuit Groq le 17 juillet 2026** (annoncé le
+  17 juin 2026). `qwen/qwen3.8-27b` est un modèle **« preview »** : Groq
+  peut le retirer à court préavis — **à vérifier au premier test**.
+  Une erreur 404 (`model_not_found`) signifie que le modèle n'est plus
+  disponible : changer `modele_vision_groq` dans `config.toml` (consulter
+  la liste des modèles Groq du moment) ou repasser à `anthropic`.
+- **Repli : `anthropic`** (Claude Haiku, vision confirmée, payant à
   l'usage — quelques centimes par capture au plus, les captures sont
-  occasionnelles). C'est le défaut parce que le modèle vision Groq
-  d'origine n'existe plus sur le palier gratuit.
-- **Alternative : `groq`** — Llama 4 Scout
-  (`meta-llama/llama-4-scout-17b-16e-instruct`) a été **retiré du palier
-  gratuit Groq le 17 juillet 2026** (annoncé le 17 juin 2026). Le modèle
-  configuré par défaut est `qwen/qwen3.8-27b`, décrit comme multimodal
-  par Groq — **à vérifier au premier test**. Une erreur 404
-  (`model_not_found`) signifie que le modèle n'est plus disponible :
-  changer `modele_vision_groq` dans `config.toml` (consulter la liste des
-  modèles Groq du moment) ou repasser à `anthropic`.
+  occasionnelles). Basculer = une ligne dans `config.toml`.
 - Les clés sont les mêmes que pour la boucle (`GROQ_API_KEY`,
   `ANTHROPIC_API_KEY` dans `.env`) — aucune nouvelle clé à créer.
 
@@ -61,8 +61,9 @@ clé `fournisseur_vision` — jamais en dur dans le code.
 
 - Python 3.10+ et Windows (laptop de Julien pour tester).
 - Étapes 2 à 4 installées : voix Piper, minuteur, boucle vocale F9.
-- Une clé **Anthropic** (vision par défaut) ou **Groq** (alternative) dans
-  `.env` — voir `docs/etape-4-declenchement.md` pour les obtenir.
+- Une clé **Groq** (vision par défaut, même clé que la boucle) ou
+  **Anthropic** (repli) dans `.env` — voir
+  `docs/etape-4-declenchement.md` pour les obtenir.
 - Chromium pour Playwright (voir Installation).
 
 ## Installation
@@ -92,7 +93,7 @@ si ce n'est pas déjà fait) :
 
 ```toml
 [yeux]
-fournisseur_vision = "anthropic"   # "anthropic" (défaut) ou "groq"
+fournisseur_vision = "groq"   # "groq" (défaut) ou "anthropic" (repli)
 modele_vision_groq = "qwen/qwen3.8-27b"
 modele_vision_anthropic = "claude-haiku-4-5-20251001"
 largeur_max = 1280
@@ -233,7 +234,8 @@ Dans `scripts/boucle_voix.py` (F9 pour parler) :
 
 - Tester sur le laptop de Julien : première capture décrite, première
   ouverture de navigateur, première recherche.
-- Vérifier le modèle vision Groq (`qwen/qwen3.8-27b`) au premier test, ou
-  rester sur Anthropic.
+- Vérifier le modèle vision Groq (`qwen/qwen3.8-27b`) au premier test
+  (`python scripts\yeux.py decrire --fenetre`), ou repasser à Anthropic
+  (`fournisseur_vision = "anthropic"` dans `config.toml`).
 - La lecture complète de page en boucle vocale attend la décision bloc 16.
 - Étape suivante (6) : HUD local léger + lancement de session.

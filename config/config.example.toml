@@ -59,12 +59,14 @@ fichier = "data/timers.json"
 # Vision d'écran ciblée (étape 5) — scripts/yeux.py.
 # Capture ciblée par défaut (fenêtre active) ; jamais tout l'écran sans
 # --tout-ecran explicite ; consentement oral à chaque capture en boucle vocale.
-# Fournisseur vision par défaut : "anthropic" (Claude Haiku, vision confirmée,
-# payant à l'usage, quelques centimes par capture au plus).
-# "groq" en alternative — Llama 4 Scout a été retiré du palier gratuit Groq
-# le 17 juill. 2026 ; qwen3.8-27b est décrit comme multimodal par Groq,
-# à vérifier au premier test (erreur 404 = modèle indisponible).
-fournisseur_vision = "anthropic"
+# Fournisseur vision par défaut : "groq" (qwen/qwen3.8-27b, multimodal —
+# un seul service, Groq, pour cerveau + STT + vision, décision de Julien
+# le 21 nov. 2026). Llama 4 Scout a été retiré du palier gratuit Groq
+# le 17 juill. 2026. qwen3.8-27b est un modèle « preview » : il peut être
+# retiré à court préavis (erreur 404 = modèle indisponible).
+# Repli : "anthropic" (Claude Haiku, vision confirmée, payant à l'usage,
+# quelques centimes par capture au plus) — basculer = une ligne ici.
+fournisseur_vision = "groq"
 modele_vision_groq = "qwen/qwen3.8-27b"
 modele_vision_anthropic = "claude-haiku-4-5-20251001"
 largeur_max = 1280
@@ -86,6 +88,23 @@ blocage_ecritures_apres_lecture_externe = true
 confirmation_orale_max_mots = 8
 
 [hud]
-# HUD local léger (décision OUI, 21 nov. 2026) — version allégée.
-# Le HUD du dépôt B coûte ~760 Mo en veille : garder celui-ci minimal.
+# HUD local léger (décision OUI, 21 nov. 2026) — scripts/hud.py (Tkinter,
+# bibliothèque standard, pas de navigateur embarqué). Le HUD du dépôt B
+# coûte ~760 Mo en veille : garder celui-ci minimal (< 100 Mo, ~0 % CPU).
 active = true
+# Position : "bas-droite" (défaut), "bas-gauche", "haut-droite", "haut-gauche".
+# La position exacte est mémorisée dans data/widget.json (gitignoré).
+position = "bas-droite"
+taille = 180
+toujours_au_premier_plan = true
+# Intervalle de relecture de l'état (ms) — data/hud-state.json, écrit par
+# la boucle vocale à chaque changement d'état.
+intervalle_ms = 500
+
+[session]
+# Lancement de session (décision OUI, bloc 28, 21 nov. 2026) —
+# scripts/lancer_session.ps1 : minuteurs, résumés Carson (a-dire/), HUD,
+# boucle vocale. Les quadrants sont dans config.local.toml (privé).
+lire_a_dire = true
+annoncer_minuteurs_du_jour = true
+demarrer_hud = true

@@ -35,6 +35,13 @@ est appelé en sous-processus quand Julien demande un minuteur à voix haute.
   - La lecture complète de page en boucle vocale n'est PAS branchée
     (décision bloc 16 encore ouverte) : navigateur.py lire reste en CLI.
 
+Étape 6 — HUD léger (scripts/hud.py) : l'état de la boucle (repos /
+écoute / réflexion / réponse / erreur) est écrit dans
+data/hud-state.json à chaque changement de phase (fonction
+ecrire_etat_hud(), jamais bloquante). Maintenir le clic sur l'anneau du
+HUD = équivalent F9 (data/hud-ptt.json, sondé toutes les 0,2 s ; un clic
+pendant une réponse l'interrompt, comme F9). Aucun port réseau.
+
 Sécurité (docs/regles-securite.md) :
   - Depuis l'étape 5, des données externes sont lues : description d'écran
     (yeux.py) et texte de page (navigateur.py, CLI seulement). Elles sont
@@ -80,6 +87,7 @@ SCRIPT_VOIX = RACINE / "scripts" / "lire_voix.py"
 SCRIPT_MINUTEUR = RACINE / "scripts" / "minuteur.py"
 SCRIPT_YEUX = RACINE / "scripts" / "yeux.py"
 SCRIPT_NAVIGATEUR = RACINE / "scripts" / "navigateur.py"
+SCRIPT_HUD = RACINE / "scripts" / "hud.py"
 
 # Valeurs par défaut (surchargées par config.toml [boucle], [yeux] et
 # [navigateur], puis par .env).
@@ -96,10 +104,12 @@ DEFAUTS = {
     "duree_min_enregistrement": 0.3,
     "max_tours_outils": 3,
     "max_tokens_reponse": 400,
-    # Yeux (étape 5) : vision par défaut "anthropic" (Haiku, vision
-    # confirmée). "groq" en alternative — Llama 4 Scout retiré du palier
-    # gratuit Groq le 17 juill. 2026 ; qwen3.8-27b à vérifier au test.
-    "fournisseur_vision": "anthropic",
+    # Yeux (étape 5) : vision par défaut "groq" (qwen3.8-27b, multimodal —
+    # un seul service Groq pour cerveau + STT + vision, décision de Julien
+    # le 21 nov. 2026). "anthropic" (Haiku, vision confirmée) en repli.
+    # Llama 4 Scout retiré du palier gratuit Groq le 17 juill. 2026 ;
+    # qwen3.8-27b est un modèle « preview », à vérifier au premier test.
+    "fournisseur_vision": "groq",
     "modele_vision_groq": "qwen/qwen3.8-27b",
     "modele_vision_anthropic": "claude-haiku-4-5-20251001",
     "largeur_max_ecran": 1280,
@@ -184,6 +194,58 @@ def charger_config(racine: Path) -> dict:
     if os.environ.get("JARVIS_VISION"):
         config["fournisseur_vision"] = os.environ["JARVIS_VISION"].lower()
     return config
+
+
+# ---------------------------------------------------------------------------
+# HUD (étape 6) — état partagé par fichiers locaux, sans port réseau
+# ---------------------------------------------------------------------------
+
+FICHIER_ETAT_HUD = RACINE / "data" / "hud-state.json"
+FICHIER_PTT_HUD = RACINE / "data" / "hud-ptt.json"
+
+
+def ecrire_etat_hud(etat: str, transcription: str = "",
+                    erreur: str = "") -> None:
+    """Écrit l'état courant pour le HUD (scripts/hud.py) — jamais bloquant.
+
+    data/hud-state.json, écrit atomiquement (fichier temporaire +
+    os.replace). Toute erreur est silencieuse : le HUD fonctionne sans
+    la boucle (état « repos » par défaut). États : repos, ecoute,
+    reflexion, reponse, erreur.
+    """
+    try:
+        FICHIER_ETAT_HUD.parent.mkdir(parents=True, exist_ok=True)
+        donnees = {
+            "etat": etat,
+            "transcription": transcription,
+            "erreur": erreur,
+            "horodatage": datetime.now(FUSEAU).isoformat(timespec="seconds"),
+        }
+        temporaire = FICHIER_ETAT_HUD.with_suffix(".json.tmp")
+        temporaire.write_text(
+            json.dumps(donnees, ensure_ascii=False), encoding="utf-8")
+        os.replace(temporaire, FICHIER_ETAT_HUD)
+    except OSError:
+        pass
+
+
+def lire_ptt_hud() -> bool:
+    """Lit la demande push-to-talk du HUD (clic maintenu sur l'anneau).
+
+    Vrai si data/hud-ptt.json indique actif=true et récent (moins de
+    2 s) — un fichier périmé (HUD fermé en plein clic) est ignoré.
+    Ne lève jamais d'exception.
+    """
+    try:
+        donnees = json.loads(FICHIER_PTT_HUD.read_text(encoding="utf-8"))
+        if not donnees.get("actif"):
+            return False
+        moment = datetime.fromisoformat(str(donnees.get("horodatage", "")))
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=FUSEAU)
+        return (datetime.now(FUSEAU) - moment).total_seconds() < 2.0
+    except (OSError, ValueError):
+        return False
 
 
 def prompt_systeme() -> str:
@@ -1176,6 +1238,8 @@ def verifier(config: dict) -> int:
 
     ligne_optionnel(SCRIPT_YEUX.exists(), "scripts/yeux.py")
     ligne_optionnel(SCRIPT_NAVIGATEUR.exists(), "scripts/navigateur.py")
+    ligne_optionnel(SCRIPT_HUD.exists(),
+                    "scripts/hud.py (étape 6, anneau d'état)")
     for module in ("PIL", "playwright"):
         try:
             __import__(module)
@@ -1206,15 +1270,22 @@ def verifier(config: dict) -> int:
 # Boucle interactive F9
 # ---------------------------------------------------------------------------
 
-def enregistrer_jusqu_a_relache(fin: threading.Event, duree_max: float):
+def enregistrer_jusqu_a_relache(fin: threading.Event, duree_max: float,
+                                verifier_ptt=None):
     """Enregistre jusqu'à ce que l'événement de relâche soit posé (ou 30 s).
 
+    `verifier_ptt` (optionnel) est appelé à chaque itération quand
+    l'enregistrement a démarré depuis le HUD : s'il retourne False (clic
+    relâché), l'enregistrement s'arrête — équivalent de relâcher F9.
     Retourne (octets WAV, durée en secondes)."""
     enregistreur = Enregistreur()
     enregistreur.demarrer()
     debut = time.monotonic()
     try:
         while not fin.wait(timeout=0.05):
+            if verifier_ptt is not None and not verifier_ptt():
+                print("(Clic HUD relâché.)")
+                break
             if time.monotonic() - debut >= duree_max:
                 print("(30 secondes maximum atteintes.)")
                 break
@@ -1334,26 +1405,64 @@ def main() -> int:
 
     ecouteur = keyboard.Listener(on_press=on_press, on_release=on_release)
     ecouteur.start()
+
+    # Étape 6 : le clic HUD pendant une réponse l'interrompt (comme F9).
+    # Fil démon (sondage toutes les 0,2 s) ; meurt avec le processus.
+    def _surveiller_ptt_hud():
+        precedent = False
+        while True:
+            actif = lire_ptt_hud()
+            if actif and not precedent and etat["phase"] == "parle":
+                evenement_interruption.set()
+            precedent = actif
+            time.sleep(0.2)
+
+    threading.Thread(target=_surveiller_ptt_hud, daemon=True).start()
+
+    # Front montant du clic HUD (un appui maintenu ne redémarre pas
+    # un enregistrement — comme F9, qui ne se déclenche qu'à l'enfoncement).
+    ptt_precedent = {"actif": False}
+
+    def ptt_nouveau_clic() -> bool:
+        actif = lire_ptt_hud()
+        nouveau = actif and not ptt_precedent["actif"]
+        ptt_precedent["actif"] = actif
+        return nouveau
+
+    ecrire_etat_hud("repos")  # Étape 6 : le HUD reflète l'état.
     try:
         while True:
-            evenement_presse.wait()
-            evenement_presse.clear()
+            # Attente d'un déclenchement : F9 (événement) ou clic maintenu
+            # sur l'anneau du HUD (fichier data/hud-ptt.json, sondé
+            # toutes les 0,2 s — étape 6).
+            demarrage_hud = False
+            while True:
+                if evenement_presse.wait(timeout=0.2):
+                    evenement_presse.clear()
+                    break
+                if ptt_nouveau_clic() and etat["phase"] == "repos":
+                    demarrage_hud = True
+                    break
             if etat["phase"] != "repos":
                 continue
             etat["phase"] = "enregistrement"
             evenement_relache.clear()
+            ecrire_etat_hud("ecoute")
             print("🎙️  J'écoute… (relâchez F9 pour envoyer)", flush=True)
             try:
                 octets, duree = enregistrer_jusqu_a_relache(
                     evenement_relache,
-                    float(config["duree_max_enregistrement"]))
+                    float(config["duree_max_enregistrement"]),
+                    verifier_ptt=lire_ptt_hud if demarrage_hud else None)
             except Exception as erreur:
                 print(f"Erreur micro : {erreur}", file=sys.stderr)
+                ecrire_etat_hud("erreur", erreur="Micro indisponible")
                 etat["phase"] = "repos"
                 continue
             etat["phase"] = "traitement"
             if duree < float(config["duree_min_enregistrement"]):
                 print("Trop court, ignoré.")
+                ecrire_etat_hud("repos")
                 etat["phase"] = "repos"
                 continue
             try:
@@ -1361,13 +1470,16 @@ def main() -> int:
             except Exception as erreur:
                 print(f"Erreur de transcription : {erreur}", file=sys.stderr)
                 print("Réessayez en maintenant F9 un peu plus longtemps.")
+                ecrire_etat_hud("erreur", erreur="Transcription impossible")
                 etat["phase"] = "repos"
                 continue
             if not transcription.strip():
                 print("Je n'ai rien compris — réessayez.")
+                ecrire_etat_hud("repos")
                 etat["phase"] = "repos"
                 continue
             print(f"Julien : {transcription}")
+            ecrire_etat_hud("reflexion", transcription=transcription)
             reponse = traiter_tour(transcription, config, cerveau,
                                    historique, args.donnees,
                                    confirmation_en_attente,
@@ -1376,8 +1488,10 @@ def main() -> int:
             historique.append({"role": "assistant", "content": reponse})
             historique = historique[-20:]
             etat["phase"] = "parle"
+            ecrire_etat_hud("reponse", transcription=transcription)
             evenement_interruption.clear()
             dire(reponse, str(config["langue"]), evenement_interruption)
+            ecrire_etat_hud("repos", transcription=transcription)
             etat["phase"] = "repos"
     except KeyboardInterrupt:
         print("\nAu revoir, Julien.")

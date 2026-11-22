@@ -1,0 +1,6 @@
+# Étape 6 — HUD léger + lancement de session : aucune dépendance nouvelle.
+# Tkinter fait partie de la bibliothèque standard de Python (Windows :
+# installé avec Python depuis python.org).
+# Repli barre système (optionnel, seulement si Tkinter est indisponible) :
+# pystray (icône de barre système) — décommenter pour l'installer :
+# pystray>=0.19

@@ -19,15 +19,16 @@ Modes de capture :
                 affiche un avertissement.
 
 Vision (fournisseur choisi dans config.toml [yeux], jamais en dur) :
-  - Défaut : "anthropic" — Claude Haiku, vision confirmée, payant à l'usage
+  - Défaut : "groq" — qwen/qwen3.8-27b, multimodal (un seul service, Groq,
+    pour cerveau + STT + vision, décision de Julien le 21 nov. 2026).
+    Modèle « preview » : Groq peut le retirer à court préavis. Une erreur
+    404 (model_not_found) signifie que le modèle n'est plus disponible :
+    changer modele_vision_groq dans config.toml (consulter la liste des
+    modèles Groq du moment) ou repasser à "anthropic".
+  - Repli : "anthropic" — Claude Haiku, vision confirmée, payant à l'usage
     (quelques centimes par capture au plus, images occasionnelles).
-  - Alternative : "groq" — Llama 4 Scout (meta-llama/llama-4-scout-17b-16e-
-    instruct) a été RETIRÉ du palier gratuit Groq le 17 juillet 2026
-    (annoncé le 17 juin 2026) ; le modèle configuré par défaut est
-    qwen/qwen3.8-27b, décrit comme multimodal par Groq — À VÉRIFIER au
-    premier test. Une erreur 404 (model_not_found) signifie que le modèle
-    n'est plus disponible : changer modele_vision_groq dans config.toml
-    (consulter la liste des modèles Groq du moment) ou repasser à Anthropic.
+  - Llama 4 Scout (meta-llama/llama-4-scout-17b-16e-instruct) a été RETIRÉ
+    du palier gratuit Groq le 17 juillet 2026 (annoncé le 17 juin 2026).
 
 Sécurité (docs/regles-securite.md) :
   - Consentement explicite à chaque capture (décision bloc 26, 21 nov. 2026).
@@ -54,7 +55,7 @@ RACINE = Path(__file__).resolve().parent.parent
 
 # Valeurs par défaut (surchargées par config.toml [yeux] puis par .env).
 DEFAUTS = {
-    "fournisseur_vision": "anthropic",  # "anthropic" ou "groq".
+    "fournisseur_vision": "groq",  # "groq" ou "anthropic" (repli).
     "modele_vision_groq": "qwen/qwen3.8-27b",
     "modele_vision_anthropic": "claude-haiku-4-5-20251001",
     "largeur_max": 1280,
@@ -283,12 +284,11 @@ def creer_vision(config: dict):
         cle = os.environ.get("ANTHROPIC_API_KEY", "").strip()
         if not cle:
             print("Erreur : ANTHROPIC_API_KEY absente.", file=sys.stderr)
-            print("La vision par défaut utilise Claude Haiku : mettez "
-                  "votre clé Anthropic dans .env :", file=sys.stderr)
+            print("La vision est configurée sur Claude Haiku (repli) : "
+                  "mettez votre clé Anthropic dans .env :", file=sys.stderr)
             print("  ANTHROPIC_API_KEY=sk-ant-...", file=sys.stderr)
-            print("Ou passez à Groq : fournisseur_vision = \"groq\" dans "
-                  "config.toml (modèle multimodal à vérifier).",
-                  file=sys.stderr)
+            print("Ou repassez à Groq (défaut) : fournisseur_vision = "
+                  "\"groq\" dans config.toml.", file=sys.stderr)
             raise SystemExit(3)
         try:
             return VisionAnthropic(
@@ -373,10 +373,11 @@ def verifier(config: dict) -> int:
         ligne(bool(os.environ.get("GROQ_API_KEY", "").strip()),
               "GROQ_API_KEY dans .env",
               "clé gratuite sur https://console.groq.com")
-        print("  Note : Llama 4 Scout a été retiré du palier gratuit Groq "
-              "le 17 juill. 2026 ; le modèle configuré "
-              f"({config['modele_vision_groq']}) est à vérifier au "
-              "premier test (erreur 404 = modèle indisponible).")
+        print("  Note : le modèle configuré "
+              f"({config['modele_vision_groq']}) est un modèle « preview » "
+              "Groq : il peut être retiré à court préavis — à vérifier au "
+              "premier test (erreur 404 = modèle indisponible) ; repli : "
+              "fournisseur_vision = \"anthropic\" dans config.toml.")
     elif fournisseur == "anthropic":
         ligne(bool(os.environ.get("ANTHROPIC_API_KEY", "").strip()),
               "ANTHROPIC_API_KEY dans .env",
