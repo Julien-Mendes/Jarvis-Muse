@@ -1,0 +1,12 @@
+# Dépendances de l'étape 7 — Application Jarvis (fenêtre desktop moderne)
+# Installer avec : pip install -r scripts/requirements-etape7.txt
+# (dans l'environnement virtuel du dépôt, voir docs/etape-7-application.md)
+#
+# CustomTkinter 6.0.0 : version vérifiée compatible Python 3.14
+# (paquet MSYS2 mingw-w64-python-customtkinter 6.0.0 compilé pour
+# Python 3.14 ; documentation officielle : « CustomTkinter requires
+# Python 3.7 or newer with Tkinter »). Aucune autre dépendance :
+# CustomTkinter ne demande que Tkinter (bibliothèque standard) +
+# darkdetect + packaging + Pillow (installés automatiquement).
+
+customtkinter==6.0.0

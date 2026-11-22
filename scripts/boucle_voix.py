@@ -42,6 +42,13 @@ ecrire_etat_hud(), jamais bloquante). Maintenir le clic sur l'anneau du
 HUD = équivalent F9 (data/hud-ptt.json, sondé toutes les 0,2 s ; un clic
 pendant une réponse l'interrompt, comme F9). Aucun port réseau.
 
+Étape 7 — Application (scripts/app.py) : chaque tour est ajouté au
+journal de conversation data/conversation.jsonl (fonction
+journaliser_echange(), jamais bloquante, plafonnée aux 200 dernières
+lignes) — c'est l'historique affiché par l'application. Le HUD de
+l'étape 6 continue de fonctionner sans changement (même
+data/hud-state.json, même data/hud-ptt.json).
+
 Sécurité (docs/regles-securite.md) :
   - Depuis l'étape 5, des données externes sont lues : description d'écran
     (yeux.py) et texte de page (navigateur.py, CLI seulement). Elles sont
@@ -228,6 +235,51 @@ def ecrire_etat_hud(etat: str, transcription: str = "",
         temporaire.write_text(
             json.dumps(donnees, ensure_ascii=False), encoding="utf-8")
         os.replace(temporaire, FICHIER_ETAT_HUD)
+    except OSError:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Étape 7 — Journal de conversation pour l'application (scripts/app.py)
+# ---------------------------------------------------------------------------
+
+FICHIER_CONVERSATION = RACINE / "data" / "conversation.jsonl"
+MAX_LIGNES_CONVERSATION = 200
+
+
+def journaliser_echange(texte_utilisateur: str, texte_jarvis: str) -> None:
+    """Ajoute un tour au journal de conversation (data/conversation.jsonl).
+
+    Une ligne JSON par message : {"role": "user"|"jarvis", "texte": ...,
+    "heure": "ISO"}. Plafonné aux 200 dernières lignes (les plus anciennes
+    sont retirées). Écriture atomique (fichier temporaire + os.replace),
+    jamais bloquante : toute erreur est silencieuse — la boucle ne doit
+    jamais planter pour le journal.
+
+    Le journal est local uniquement (data/, gitignoré) : c'est
+    l'historique affiché par l'application Jarvis sur la machine de
+    Julien, pas un journal de télémétrie (voir docs/regles-securite.md
+    §7 : les journaux de télémétrie, eux, ne contiennent jamais le
+    contenu des conversations).
+    """
+    try:
+        FICHIER_CONVERSATION.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            lignes = FICHIER_CONVERSATION.read_text(
+                encoding="utf-8").splitlines()
+        except OSError:
+            lignes = []
+        maintenant = datetime.now(FUSEAU).isoformat(timespec="seconds")
+        lignes.append(json.dumps(
+            {"role": "user", "texte": texte_utilisateur,
+             "heure": maintenant}, ensure_ascii=False))
+        lignes.append(json.dumps(
+            {"role": "jarvis", "texte": texte_jarvis,
+             "heure": maintenant}, ensure_ascii=False))
+        lignes = lignes[-MAX_LIGNES_CONVERSATION:]
+        temporaire = FICHIER_CONVERSATION.with_suffix(".jsonl.tmp")
+        temporaire.write_text("\n".join(lignes) + "\n", encoding="utf-8")
+        os.replace(temporaire, FICHIER_CONVERSATION)
     except OSError:
         pass
 
@@ -1368,6 +1420,7 @@ def main() -> int:
         try:
             reponse = traiter_tour(args.texte, config, cerveau, [],
                                    args.donnees, {}, session_texte)
+            journaliser_echange(args.texte, reponse)
         finally:
             session_texte.fermer()
         print(f"Jarvis : {reponse}")
@@ -1510,6 +1563,7 @@ def main() -> int:
                                    historique, args.donnees,
                                    confirmation_en_attente,
                                    session_navigateur)
+            journaliser_echange(transcription, reponse)
             historique.append({"role": "user", "content": transcription})
             historique.append({"role": "assistant", "content": reponse})
             historique = historique[-20:]

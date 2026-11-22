@@ -106,6 +106,22 @@ toujours_au_premier_plan = true
 # la boucle vocale à chaque changement d'état.
 intervalle_ms = 500
 
+[app]
+# Application Jarvis (étape 7, décision 21 nov. 2026) — scripts/app.py
+# (CustomTkinter, thème sombre, ambiance du Jarvis de référence :
+# fond très sombre, orbe lumineux qui pulse, conversation écrite).
+# Remplacera le HUD quand elle sera validée ; le HUD reste disponible
+# entre-temps (les deux lisent les mêmes fichiers data/).
+active = true
+largeur = 900   # largeur de la fenêtre en pixels (640 à 1600)
+hauteur = 650   # hauteur de la fenêtre en pixels (480 à 1200)
+toujours_au_premier_plan = false
+# Intervalle de relecture de l'état, de la conversation et des minuteurs
+# (ms) — data/hud-state.json, data/conversation.jsonl, data/timers.json.
+intervalle_ms = 500
+# La position et la taille exactes sont mémorisées dans data/app.json
+# (gitignoré) quand la fenêtre est déplacée ou redimensionnée.
+
 [session]
 # Lancement de session (décision OUI, bloc 28, 21 nov. 2026) —
 # scripts/lancer_session.ps1 : minuteurs, résumés Carson (a-dire/), HUD,
