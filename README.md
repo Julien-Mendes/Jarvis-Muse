@@ -40,7 +40,7 @@ Carson ne fait pas déjà.
 |---|---|---|
 | 0 — Décisions | Cocher la liste du §5 de la description | ✅ En cours — 11 décisions validées le 21 nov. 2026 |
 | 1 — Fondations | `config/` séparé (publique / locale / secrets), règles de sécurité écrites (`docs/regles-securite.md`) | ✅ Fait |
-| 2 — Voix locale | Vérifier une voix française (Piper `gilles` / Kokoro) ; petit script qui lit à voix haute un texte fourni par Carson. Bilingue FR + EN. Push-to-talk (F9) comme déclencheur simple, avant tout mot de réveil. | 🚧 En cours — livré le 21 nov. : `scripts/lire_voix.py` (Piper, bilingue FR/EN), `scripts/requirements-etape2.txt`, `docs/etape-2-voix.md`, dossier `a-dire/` pour les textes à lire. Reste : installation et test sur le laptop de Julien (Python + Piper + voix `gilles`), puis premier résumé lu à voix haute. Déclencheur F9 : décision non tranchée — le script s'invoque en ligne de commande pour l'instant. |
+| 2 — Voix locale | Vérifier une voix française (Piper `gilles` / Kokoro) ; petit script qui lit à voix haute un texte fourni par Carson. Bilingue FR + EN. Push-to-talk (F9) comme déclencheur simple, avant tout mot de réveil. | 🚧 En cours — livré le 21 nov. : `scripts/lire_voix.py` (Piper, bilingue FR/EN), `scripts/requirements-etape2.txt`, `docs/etape-2-voix.md`, dossier `a-dire/` pour les textes à lire. Reste : installation et test sur le laptop de Julien (Python + Piper + voix `gilles`), puis premier résumé lu à voix haute. Déclencheur F9 validé le 21 nov. comme déclencheur pour la suite (étape 4) — le script s'invoque en ligne de commande pour l'instant. |
 | 3 — Minuteur local persistant | Reprendre le patron `timers.py` du dépôt B (JSON persistant, carillon, annonce des retards au démarrage). Première brique qui agit seule, sans Carson. | À faire |
 | 4 — Déclenchement | Mot de réveil français (si un modèle existe) ou double-clap ; sinon, garder le push-to-talk. | Plus tard |
 | 5 — Yeux et mains | Vision d'écran ciblée + contrôle navigateur (Playwright), avec consentement explicite et capture limitée. Plus gros chantier ; comble la plus grande limite de Carson. | À faire |
@@ -67,7 +67,7 @@ du code allemand ou anglais.
 | 5 — Interface et session | HUD local léger | ✅ Oui |
 | 5 — Interface et session | Serveur local | ⏳ En suspens — hardware (mini-PC) à venir ; le logiciel tourne sur le laptop en attendant pour tester |
 
-Reste à décider : push-to-talk F9, STT local, notes quotidiennes, lecture de
+Reste à décider : STT local, notes quotidiennes, lecture de
 page complète, lancement de session + quadrants, auto-start, bloc 6 (doublons).
 
 ## Sécurité

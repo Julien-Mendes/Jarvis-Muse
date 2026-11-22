@@ -107,8 +107,9 @@ contenu sensible (mot de passe, code, information privée).
 - Pas de mot de réveil (« Hey Carson ») : décision « plus tard ».
 - Pas de double-clap : décision « plus tard ».
 - Pas de boucle interactive ni d'écoute en continu : le script est invoqué en
-  ligne de commande. Le déclencheur (push-to-talk F9, décision non tranchée)
-  viendra à l'étape 4.
+  ligne de commande. Le déclencheur choisi pour la suite est le **push-to-talk
+  F9** (validé le 21 nov. 2026 : maintenir F9 pour parler, relâcher pour
+  arrêter) — il sera construit à l'étape 4, après le minuteur.
 - Pas de STT (transcription) : décision non tranchée.
 
 ## Statut

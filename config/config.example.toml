@@ -24,7 +24,8 @@ effet_murs = false
 [declenchement]
 # Déclencheur actuel : lancement manuel de la session.
 # Mot de réveil et double-clap : décisions "plus tard" (21 nov. 2026).
-# Push-to-talk (touche globale, ex. F9) : à décider.
+# Push-to-talk (touche globale F9) : validé le 21 nov. 2026 comme déclencheur
+# pour la suite (étape 4) — maintenir F9 pour parler, relâcher pour arrêter.
 mode = "manuel"
 touche_push_to_talk = "F9"
 
