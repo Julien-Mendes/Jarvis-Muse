@@ -52,7 +52,19 @@ def synthetiser(texte: str, chemin_modele: Path, chemin_config: Path, vitesse: f
     echelle = 1.0 / vitesse
     morceaux = []
     frequence = None
-    for morceau in voix.synthesize(texte, length_scale=echelle):
+    try:
+        # piper-tts récent : length_scale passe par SynthesisConfig
+        # (l'appel direct plantait : « unexpected keyword argument
+        # 'length_scale' », constaté au premier test le 21 nov. 2026).
+        from piper.config import SynthesisConfig
+
+        generateur = voix.synthesize(
+            texte, syn_config=SynthesisConfig(length_scale=echelle)
+        )
+    except (ImportError, TypeError):
+        # Ancienne API piper-tts : length_scale en paramètre direct.
+        generateur = voix.synthesize(texte, length_scale=echelle)
+    for morceau in generateur:
         frequence = morceau.sample_rate
         morceaux.append(morceau.audio_int16_bytes)
     return frequence, b"".join(morceaux)
