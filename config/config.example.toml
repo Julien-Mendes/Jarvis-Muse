@@ -55,6 +55,30 @@ max_actifs = 20
 duree_max = "7j"
 fichier = "data/timers.json"
 
+[yeux]
+# Vision d'écran ciblée (étape 5) — scripts/yeux.py.
+# Capture ciblée par défaut (fenêtre active) ; jamais tout l'écran sans
+# --tout-ecran explicite ; consentement oral à chaque capture en boucle vocale.
+# Fournisseur vision par défaut : "anthropic" (Claude Haiku, vision confirmée,
+# payant à l'usage, quelques centimes par capture au plus).
+# "groq" en alternative — Llama 4 Scout a été retiré du palier gratuit Groq
+# le 17 juill. 2026 ; qwen3.8-27b est décrit comme multimodal par Groq,
+# à vérifier au premier test (erreur 404 = modèle indisponible).
+fournisseur_vision = "anthropic"
+modele_vision_groq = "qwen/qwen3.8-27b"
+modele_vision_anthropic = "claude-haiku-4-5-20251001"
+largeur_max = 1280
+max_tokens_description = 300
+
+[navigateur]
+# Contrôle du navigateur (étape 5) — scripts/navigateur.py (Playwright).
+# Lecture seule par défaut : navigation, recherche, clics sur liens/boutons
+# hors formulaire, lecture de texte, capture de page. Aucune soumission de
+# formulaire, aucune connexion, aucun achat (hold_writes).
+navigateur_defaut = "systeme"  # "systeme" (navigateur par défaut) ou "playwright"
+delai_apres_navigation = 2
+max_caracteres_page = 5000
+
 [securite]
 # Ne jamais changer sans relire docs/regles-securite.md
 hote_serveur = "127.0.0.1"

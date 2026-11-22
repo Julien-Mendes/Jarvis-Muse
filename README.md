@@ -43,7 +43,7 @@ Carson ne fait pas déjà.
 | 2 — Voix locale | Vérifier une voix française (Piper `gilles` / Kokoro) ; petit script qui lit à voix haute un texte fourni par Carson. Bilingue FR + EN. Push-to-talk (F9) comme déclencheur simple, avant tout mot de réveil. | 🚧 En cours — livré le 21 nov. : `scripts/lire_voix.py` (Piper, bilingue FR/EN), `scripts/requirements-etape2.txt`, `docs/etape-2-voix.md`, dossier `a-dire/` pour les textes à lire. Reste : installation et test sur le laptop de Julien (Python + Piper + voix `gilles`), puis premier résumé lu à voix haute. Déclencheur F9 validé le 21 nov. comme déclencheur pour la suite (étape 4) — le script s'invoque en ligne de commande pour l'instant. |
 | 3 — Minuteur local persistant | Reprendre le patron `timers.py` du dépôt B (JSON persistant, carillon, annonce des retards au démarrage). Première brique qui agit seule, sans Carson. | 🚧 En cours — livré le 21 nov. : `scripts/minuteur.py` (compte à rebours / rappel à heure fixe, JSON persistant, carillon + annonce vocale via `lire_voix.py`, annonce des retards au démarrage), `docs/etape-3-minuteur.md`. Reste : test sur le laptop de Julien (minuteur d'1 minute, lister, annuler). Auto-start au login : décision encore ouverte, non configuré dans cette étape. |
 | 4 — Déclenchement | Boucle vocale interactive F9 (maintenir pour parler, relâcher pour envoyer, F9 pour interrompre). Cerveau par défaut : Groq gratuit (gpt-oss-120b) ; Claude Haiku par API en alternative configurable. STT Groq Whisper, interchangeable avec faster-whisper local. Premier outil : le minuteur. | 🚧 En cours — livré le 21 nov. : `scripts/boucle_voix.py` (F9, STT Groq Whisper interchangeable, cerveau Groq / Haiku configurable, outil minuteur), `scripts/requirements-etape4.txt`, `docs/etape-4-declenchement.md`. Reste : test sur le laptop de Julien (clé Groq gratuite, premier tour « mets un minuteur d'une minute »). |
-| 5 — Yeux et mains | Vision d'écran ciblée + contrôle navigateur (Playwright), avec consentement explicite et capture limitée. Plus gros chantier ; comble la plus grande limite de Carson. | À faire |
+| 5 — Yeux et mains | Vision d'écran ciblée + contrôle navigateur (Playwright), avec consentement explicite et capture limitée. Plus gros chantier ; comble la plus grande limite de Carson. | 🚧 En cours — livré le 21 nov. : `scripts/yeux.py` (capture ciblée fenêtre/région, vision Haiku par défaut / Groq en alternative, confirmation orale avant chaque capture), `scripts/navigateur.py` (Playwright : ouvrir, rechercher, cliquer, lire, capture de page ; lecture seule, aucun formulaire/connexion/achat), `scripts/requirements-etape5.txt`, `docs/etape-5-yeux-mains.md`. Branchés dans `scripts/boucle_voix.py` (« regarde mon écran » avec confirmation, « ouvre [site] »). Reste : test sur le laptop de Julien (première capture décrite, première ouverture de navigateur). Modèle vision Groq (Llama 4 Scout) retiré du palier gratuit le 17 juill. 2026 — défaut Anthropic Haiku, Groq à vérifier au test. |
 | 6 — HUD local léger + lancement de session | Anneau d'état et cartes, version allégée ; séquence de lancement (apps + quadrants) et auto-start au login. | À faire |
 | 7 — Serveur local | FastAPI ou aiohttp sur 127.0.0.1 uniquement, jamais 0.0.0.0 sans authentification. Seulement si un mini-PC / PC toujours allumé entre en jeu. Tailscale comme pont distant, après GitHub. | En suspens (hardware) |
 
@@ -80,11 +80,12 @@ code, serveur local sur 127.0.0.1 seulement, secrets dans `.env` (gitignoré).
 - Pas de mot de réveil.
 - Pas de serveur local toujours allumé (logiciel testable sur le laptop ;
   hardware mini-PC en suspens).
-- Carson ne voit pas l'écran et ne contrôle pas le PC directement (étape 5
-  en cours de planification).
+- Vision d'écran et contrôle navigateur livrés (étape 5) — test à faire sur
+  le laptop de Julien. La lecture complète de page en boucle vocale attend
+  la décision bloc 16 (disponible en ligne de commande seulement).
 
 ## Structure
-- `scripts/` — scripts du Jarvis local (`lire_voix.py`, `minuteur.py`, `boucle_voix.py`, `requirements-etape2.txt`, `requirements-etape4.txt`)
+- `scripts/` — scripts du Jarvis local (`lire_voix.py`, `minuteur.py`, `boucle_voix.py`, `yeux.py`, `navigateur.py`, `requirements-etape2.txt`, `requirements-etape4.txt`, `requirements-etape5.txt`)
 - `data/` — minuteurs persistants (`timers.json`, gitignoré, jamais poussé)
 - `a-dire/` — textes à lire à voix haute (déposés par Carson via le pont GitHub)
 - `config/` — configurations (`config.example.toml`, `config.local.example.toml`, `.env.example`)
@@ -97,4 +98,6 @@ test à faire sur le laptop de Julien. Étape 3 (minuteur persistant) livrée
 dans le dépôt — test à faire sur le laptop de Julien (minuteur d'1 minute).
 Étape 4 (boucle vocale F9) livrée dans le dépôt — test à faire sur le laptop
 de Julien (clé Groq gratuite, premier tour « mets un minuteur d'une minute »).
-Rien d'acheté, rien de construit pour l'instant.
+Étape 5 (yeux et mains) livrée dans le dépôt — test à faire sur le laptop de
+Julien (première capture décrite, première ouverture de navigateur, première
+recherche). Rien d'acheté, rien de construit pour l'instant.

@@ -1,0 +1,12 @@
+# Dépendances de l'étape 5 — Yeux et mains (vision d'écran + navigateur)
+# Installer avec : pip install -r scripts/requirements-etape5.txt
+# Puis : playwright install chromium
+# (dans l'environnement virtuel du dépôt, voir docs/etape-5-yeux-mains.md)
+
+Pillow>=10.0
+playwright>=1.40
+
+# Vision : mêmes clients que l'étape 4 (déjà dans requirements-etape4.txt) :
+# groq>=0.20 (fournisseur vision "groq" — modèle multimodal à vérifier,
+#   voir docs/etape-5-yeux-mains.md : Llama 4 Scout retiré du palier gratuit)
+# anthropic>=0.40 (fournisseur vision "anthropic", défaut)
