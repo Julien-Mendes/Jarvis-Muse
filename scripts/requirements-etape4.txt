@@ -8,6 +8,11 @@ pynput>=1.8
 groq>=0.20
 python-dotenv>=1.0
 
+# Requis sous Windows : le module zoneinfo n'a pas de base de fuseaux
+# horaires sur Windows — sans tzdata, ZoneInfo("America/Toronto") plante
+# (constaté au premier test le 21 nov. 2026).
+tzdata>=2024.1
+
 # Optionnel — seulement pour le cerveau Claude Haiku (payant à l'usage) :
 # anthropic>=0.40
 

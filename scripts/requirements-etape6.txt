@@ -1,6 +1,10 @@
-# Étape 6 — HUD léger + lancement de session : aucune dépendance nouvelle.
+# Étape 6 — HUD léger + lancement de session.
 # Tkinter fait partie de la bibliothèque standard de Python (Windows :
 # installé avec Python depuis python.org).
 # Repli barre système (optionnel, seulement si Tkinter est indisponible) :
 # pystray (icône de barre système) — décommenter pour l'installer :
 # pystray>=0.19
+
+# Requis sous Windows : hud.py utilise ZoneInfo, qui exige tzdata
+# (même cause que l'étape 4 — constaté au premier test le 21 nov. 2026).
+tzdata>=2024.1

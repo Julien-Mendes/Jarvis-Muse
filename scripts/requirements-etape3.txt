@@ -1,0 +1,8 @@
+# Dépendances de l'Étape 3 — Minuteur local persistant
+# Installer avec : pip install -r scripts/requirements-etape3.txt
+# (dans l'environnement virtuel du dépôt, voir docs/etape-3-minuteur.md)
+#
+# minuteur.py n'utilise sinon que la bibliothèque standard — mais il
+# utilise ZoneInfo, qui exige tzdata sous Windows (Windows ne fournit
+# pas de base de fuseaux horaires IANA).
+tzdata>=2024.1
