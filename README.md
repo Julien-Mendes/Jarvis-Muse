@@ -41,7 +41,7 @@ Carson ne fait pas déjà.
 | 0 — Décisions | Cocher la liste du §5 de la description | ✅ En cours — 11 décisions validées le 21 nov. 2026 |
 | 1 — Fondations | `config/` séparé (publique / locale / secrets), règles de sécurité écrites (`docs/regles-securite.md`) | ✅ Fait |
 | 2 — Voix locale | Vérifier une voix française (Piper `gilles` / Kokoro) ; petit script qui lit à voix haute un texte fourni par Carson. Bilingue FR + EN. Push-to-talk (F9) comme déclencheur simple, avant tout mot de réveil. | 🚧 En cours — livré le 21 nov. : `scripts/lire_voix.py` (Piper, bilingue FR/EN), `scripts/requirements-etape2.txt`, `docs/etape-2-voix.md`, dossier `a-dire/` pour les textes à lire. Reste : installation et test sur le laptop de Julien (Python + Piper + voix `gilles`), puis premier résumé lu à voix haute. Déclencheur F9 validé le 21 nov. comme déclencheur pour la suite (étape 4) — le script s'invoque en ligne de commande pour l'instant. |
-| 3 — Minuteur local persistant | Reprendre le patron `timers.py` du dépôt B (JSON persistant, carillon, annonce des retards au démarrage). Première brique qui agit seule, sans Carson. | À faire |
+| 3 — Minuteur local persistant | Reprendre le patron `timers.py` du dépôt B (JSON persistant, carillon, annonce des retards au démarrage). Première brique qui agit seule, sans Carson. | 🚧 En cours — livré le 21 nov. : `scripts/minuteur.py` (compte à rebours / rappel à heure fixe, JSON persistant, carillon + annonce vocale via `lire_voix.py`, annonce des retards au démarrage), `docs/etape-3-minuteur.md`. Reste : test sur le laptop de Julien (minuteur d'1 minute, lister, annuler). Auto-start au login : décision encore ouverte, non configuré dans cette étape. |
 | 4 — Déclenchement | Mot de réveil français (si un modèle existe) ou double-clap ; sinon, garder le push-to-talk. | Plus tard |
 | 5 — Yeux et mains | Vision d'écran ciblée + contrôle navigateur (Playwright), avec consentement explicite et capture limitée. Plus gros chantier ; comble la plus grande limite de Carson. | À faire |
 | 6 — HUD local léger + lancement de session | Anneau d'état et cartes, version allégée ; séquence de lancement (apps + quadrants) et auto-start au login. | À faire |
@@ -84,7 +84,8 @@ code, serveur local sur 127.0.0.1 seulement, secrets dans `.env` (gitignoré).
   en cours de planification).
 
 ## Structure
-- `scripts/` — scripts du Jarvis local (`lire_voix.py`, `requirements-etape2.txt`)
+- `scripts/` — scripts du Jarvis local (`lire_voix.py`, `minuteur.py`, `requirements-etape2.txt`)
+- `data/` — minuteurs persistants (`timers.json`, gitignoré, jamais poussé)
 - `a-dire/` — textes à lire à voix haute (déposés par Carson via le pont GitHub)
 - `config/` — configurations (`config.example.toml`, `config.local.example.toml`, `.env.example`)
 - `docs/` — notes et plans (description complète des deux Jarvis Claude, règles de sécurité, guide de la voix locale)
@@ -92,4 +93,6 @@ code, serveur local sur 127.0.0.1 seulement, secrets dans `.env` (gitignoré).
 
 ## Statut
 Étape 1 (fondations) en place. Étape 2 (voix locale) livrée dans le dépôt —
-test à faire sur le laptop de Julien. Rien d'acheté, rien de construit pour l'instant.
+test à faire sur le laptop de Julien. Étape 3 (minuteur persistant) livrée
+dans le dépôt — test à faire sur le laptop de Julien (minuteur d'1 minute).
+Rien d'acheté, rien de construit pour l'instant.
