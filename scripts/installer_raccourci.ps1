@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     Installe (ou retire) le raccourci « Jarvis » du menu Démarrer Windows.

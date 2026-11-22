@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     Lancement de session Jarvis-Muse (étape 6) : minuteurs, résumés Carson,
