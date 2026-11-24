@@ -795,6 +795,87 @@ OUTIL_NAVIGATEUR_ANTHROPIC = {
     "input_schema": OUTIL_NAVIGATEUR_PARAMETRES,
 }
 
+# Descriptions d'outils envoyées au modèle, par langue (F3). Avec un prompt
+# système en anglais, des descriptions françaises mélangent les langues et
+# dégradent la fiabilité des appels d'outils. Les noms d'outils et de
+# paramètres ne changent jamais (contrat avec traiter_tour). Les constantes
+# OUTIL_* ci-dessus restent les versions françaises.
+TEXTES_OUTILS_EN = {
+    "regler_minuteur": {
+        "description": (
+            "Set a timer (countdown) or a reminder at a fixed time for "
+            "Julien. Use it when Julien asks for a timer or a reminder."),
+        "parametres": {
+            "minutes": "Duration in minutes for a countdown "
+                       "(e.g. 20 for \"a 20-minute timer\").",
+            "a": "Fixed time HH:MM (e.g. 18:30) or YYYY-MM-DDTHH:MM "
+                 "(e.g. 2026-11-22T18:30).",
+            "etiquette": "Name of the timer, in his own words "
+                         "(e.g. \"pasta\").",
+        },
+    },
+    "decrire_ecran": {
+        "description": (
+            "Look at Julien's screen (active window) and describe what is "
+            "on it, in 2 to 3 sentences. Use it when Julien asks what is "
+            "on his screen or what Jarvis sees. The capture first requires "
+            "Julien's spoken confirmation: call this tool, then ask him "
+            "\"May I look at your screen?\" and wait for his yes — do not "
+            "describe anything before you have received the description."),
+        "parametres": {
+            "question": "Julien's specific question about the screen "
+                        "(e.g. \"what does the error window say?\"). "
+                        "Empty if none.",
+        },
+    },
+    "ouvrir_navigateur": {
+        "description": (
+            "Open a website in Julien's browser, or search for something "
+            "in it (DuckDuckGo, first result opened). Use it when Julien "
+            "asks to open a site or to search for something in the "
+            "browser. Read-only: no login, no form, no purchase. Do not "
+            "read page contents with this tool."),
+        "parametres": {
+            "url": "URL or domain to open (e.g. youtube.com, "
+                   "https://example.com).",
+            "recherche": "Query to search in the browser "
+                         "(e.g. \"weather tomorrow\") — if no URL.",
+        },
+    },
+}
+
+
+def _outil_en(base: dict, nom: str, forme: str) -> dict:
+    """Copie de l'outil `base` avec les textes anglais (forme : groq|anthropic)."""
+    import copy
+
+    textes = TEXTES_OUTILS_EN[nom]
+    outil = copy.deepcopy(base)
+    cible = outil["function"] if forme == "groq" else outil
+    cible["description"] = textes["description"]
+    schema = cible["parameters"] if forme == "groq" else cible["input_schema"]
+    for cle, texte in textes["parametres"].items():
+        schema["properties"][cle]["description"] = texte
+    return outil
+
+
+def outils_pour(fournisseur: str, langue: str) -> list:
+    """Outils déclarés au modèle, dans la langue active.
+
+    `fournisseur` : « groq » (format fonction) ou autre (format Anthropic).
+    """
+    forme = "groq" if fournisseur == "groq" else "anthropic"
+    bases = ({"regler_minuteur": OUTIL_MINUTEUR_GROQ,
+              "decrire_ecran": OUTIL_ECRAN_GROQ,
+              "ouvrir_navigateur": OUTIL_NAVIGATEUR_GROQ}
+             if forme == "groq" else
+             {"regler_minuteur": OUTIL_MINUTEUR_ANTHROPIC,
+              "decrire_ecran": OUTIL_ECRAN_ANTHROPIC,
+              "ouvrir_navigateur": OUTIL_NAVIGATEUR_ANTHROPIC})
+    if langue == "fr":
+        return list(bases.values())
+    return [_outil_en(base, nom, forme) for nom, base in bases.items()]
+
 
 class CerveauGroq:
     """Cerveau par défaut : Groq, gpt-oss-120b (palier gratuit, sans carte)."""
@@ -1724,12 +1805,7 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
     messages += historique
     messages.append({"role": "user", "content": transcription})
     est_groq = config["fournisseur_llm"] == "groq"
-    if est_groq:
-        outils = [OUTIL_MINUTEUR_GROQ, OUTIL_ECRAN_GROQ,
-                  OUTIL_NAVIGATEUR_GROQ]
-    else:
-        outils = [OUTIL_MINUTEUR_ANTHROPIC, OUTIL_ECRAN_ANTHROPIC,
-                  OUTIL_NAVIGATEUR_ANTHROPIC]
+    outils = outils_pour(str(config["fournisseur_llm"]), str(config["langue"]))
     try:
         for _ in range(int(config["max_tours_outils"])):
             debut_llm = time.monotonic()

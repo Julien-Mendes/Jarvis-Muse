@@ -56,9 +56,9 @@ function Invoke-Voix {
     param([string]$Texte, [string]$Fichier)
     try {
         if ($Fichier) {
-            & $script:Python scripts\lire_voix.py --fichier $Fichier --langue fr 2>$null
+            & $script:Python scripts\lire_voix.py --fichier $Fichier --langue $script:Langue 2>$null
         } else {
-            & $script:Python scripts\lire_voix.py --texte $Texte --langue fr 2>$null
+            & $script:Python scripts\lire_voix.py --texte $Texte --langue $script:Langue 2>$null
         }
         if ($LASTEXITCODE -ne 0) { throw "lire_voix.py a échoué (code $LASTEXITCODE)." }
     } catch {
@@ -82,6 +82,7 @@ function Get-ConfigJarvis {
             lire_a_dire = $true; annoncer_minuteurs_du_jour = $true; demarrer_hud = $true
         }
         quadrants = [PSCustomObject]@{ actif = $false; apps = @() }
+        langue    = "en"
     }
     $code = @'
 import json, tomllib
@@ -96,11 +97,18 @@ def lire(nom):
     except Exception:
         return {}
 cfg = lire("config.example.toml")
+utilisateur = lire("config.toml")
 local = lire("config.local.toml")
 session = dict(cfg.get("session", {}))
 session.update(local.get("session", {}))
+def langue_de(d):
+    return d.get("boucle", {}).get("langue") or d.get("general", {}).get("langue")
+langue = langue_de(local) or langue_de(utilisateur) or langue_de(cfg) or "en"
+if langue not in ("fr", "en"):
+    langue = "en"
 print(json.dumps({"session": session,
-                  "quadrants": local.get("quadrants", {})}))
+                  "quadrants": local.get("quadrants", {}),
+                  "langue": langue}))
 '@
     try {
         $json = & $script:Python -c $code 2>$null | Out-String
@@ -110,7 +118,8 @@ print(json.dumps({"session": session,
         if ($null -eq $session) { $session = $defaut.session }
         $quadrants = $lu.quadrants
         if ($null -eq $quadrants) { $quadrants = $defaut.quadrants }
-        return [PSCustomObject]@{ session = $session; quadrants = $quadrants }
+        $langue = if ($lu.langue -in @("fr", "en")) { $lu.langue } else { "en" }
+        return [PSCustomObject]@{ session = $session; quadrants = $quadrants; langue = $langue }
     } catch {
         return $defaut
     }
@@ -119,12 +128,14 @@ print(json.dumps({"session": session,
 function Format-Delai {
     param([datetime]$Echeance, [datetime]$Maintenant)
     $reste = $Echeance - $Maintenant
-    if ($reste.TotalSeconds -le 0) { return "maintenant" }
+    $en = ($script:Langue -eq "en")
+    if ($reste.TotalSeconds -le 0) { return $(if ($en) { "now" } else { "maintenant" }) }
     if ($reste.TotalMinutes -lt 60) {
         $minutes = [int][math]::Round($reste.TotalMinutes)
-        if ($minutes -le 1) { return "dans 1 minute" }
-        return "dans $minutes minutes"
+        if ($minutes -le 1) { return $(if ($en) { "in 1 minute" } else { "dans 1 minute" }) }
+        return $(if ($en) { "in $minutes minutes" } else { "dans $minutes minutes" })
     }
+    if ($en) { return "at $($Echeance.ToString('HH:mm'))" }
     return "à $($Echeance.ToString('HH \h mm'))"
 }
 
@@ -222,6 +233,7 @@ if (-not (Test-Path (Join-Path $Racine ".env")) -and -not (Test-Path (Join-Path 
 New-Item -ItemType Directory -Force -Path (Join-Path $Racine "data") | Out-Null
 
 $config = Get-ConfigJarvis
+$script:Langue = $config.langue
 
 # ---------------------------------------------------------------------------
 # 2. Surveillant de minuteurs (fenêtre à part — c'est lui qui fait sonner
@@ -261,10 +273,14 @@ if ($config.session.annoncer_minuteurs_du_jour -ne $false) {
     if ($aujourdhui.Count -gt 0) {
         $maintenant = Get-Date
         $morceaux = foreach ($minuteur in $aujourdhui) {
-            $quoi = if ($minuteur.label) { "$($minuteur.kind) « $($minuteur.label) »" } else { $minuteur.kind }
+            $genre = if ($script:Langue -eq "fr") {
+                if ($minuteur.kind -eq "timer") { "minuteur" } else { "rappel" }
+            } else { $minuteur.kind }
+            $quoi = if ($minuteur.label) { "$genre « $($minuteur.label) »" } else { $genre }
             "$quoi $(Format-Delai -Echeance ([datetime]$minuteur.due) -Maintenant $maintenant)"
         }
-        $phrase = "Aujourd'hui : " + ($morceaux -join ", ") + "."
+        $debut = if ($script:Langue -eq "fr") { "Aujourd'hui : " } else { "Today: " }
+        $phrase = $debut + ($morceaux -join ", ") + "."
         Write-Host $phrase
         Invoke-Voix -Texte $phrase
     } else {
@@ -319,7 +335,7 @@ Invoke-Quadrants -Quadrants $config.quadrants
 # 7. Boucle vocale au premier plan
 # ---------------------------------------------------------------------------
 Write-Etape "Boucle vocale"
-Invoke-Voix -Texte "Jarvis prêt."
+Invoke-Voix -Texte $(if ($script:Langue -eq "fr") { "Jarvis prêt." } else { "Jarvis ready." })
 Write-Host "Jarvis prêt. Maintenez F9 pour parler (ou maintenez le clic sur l'anneau du HUD)."
 if (-not $SansBoucle) {
     & $script:Python scripts\boucle_voix.py

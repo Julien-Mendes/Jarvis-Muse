@@ -43,6 +43,24 @@ import time
 from pathlib import Path
 
 RACINE = Path(__file__).resolve().parent.parent
+
+PHRASES_PRET = {"fr": "Jarvis prêt.", "en": "Jarvis ready."}
+
+
+def langue_active() -> str:
+    """Langue active (« fr » ou « en ») : celle de config.toml, comme la boucle."""
+    try:
+        from minuteur import langue_courante
+
+        langue = langue_courante()
+    except Exception:
+        return "en"
+    return langue if langue in PHRASES_PRET else "en"
+
+
+def phrase_pret(langue: str) -> str:
+    """Phrase d'annonce de démarrage, dans la langue active."""
+    return PHRASES_PRET.get(langue, PHRASES_PRET["en"])
 SCRIPT_APP = RACINE / "scripts" / "app.py"
 SCRIPT_BOUCLE = RACINE / "scripts" / "boucle_voix.py"
 SCRIPT_MINUTEUR = RACINE / "scripts" / "minuteur.py"
@@ -207,11 +225,13 @@ def main() -> int:
             "Voir logs/lancer-app.log pour le détail.")
         arreter("surveillant de minuteurs", surveillant)
         return 1
-    # Annonce de démarrage (sans attendre : la voix joue en arrière-plan).
+    # Annonce de démarrage (sans attendre : la voix joue en arrière-plan),
+    # dans la langue active de la configuration (F3).
+    langue = langue_active()
     try:
         subprocess.Popen(
-            [python, str(SCRIPT_VOIX), "--texte", "Jarvis prêt.",
-             "--langue", "fr"],
+            [python, str(SCRIPT_VOIX), "--texte", phrase_pret(langue),
+             "--langue", langue],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except OSError:
         pass
