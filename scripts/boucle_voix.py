@@ -991,8 +991,7 @@ MESSAGES = {
         "rappel_quoi": "rappel à {heure}",
         "etiquette_suffixe": " « {etiquette} »",
         "nav_manque_site": "Il me manque le site à ouvrir, Julien.",
-        "nav_titre": " — « {titre} »",
-        "nav_ouvert": "C'est ouvert, Julien : {quoi}{detail} ({url}).",
+        "nav_ouvert": "C'est ouvert, Julien : {quoi}.",
         "nav_ouvert_defaut": "C'est ouvert, Julien : {quoi} (dans ton navigateur par défaut).",
         "nav_impossible": "Désolé Julien, je n'ai pas pu ouvrir le navigateur sur cette machine.",
         "pas_de_reponse": "Je n'ai pas de réponse, Julien.",
@@ -1026,8 +1025,7 @@ MESSAGES = {
         "rappel_quoi": "a reminder for {heure}",
         "etiquette_suffixe": ", {etiquette}",
         "nav_manque_site": "I'm missing the site to open, Julien.",
-        "nav_titre": ' — "{titre}"',
-        "nav_ouvert": "Done, Julien: opened {quoi}{detail}.",
+        "nav_ouvert": "Done, Julien: opened {quoi}.",
         "nav_ouvert_defaut": "Done, Julien: opened {quoi} in your default browser.",
         "nav_impossible": "Sorry Julien, I couldn't open the browser on this machine.",
         "pas_de_reponse": "I don't have an answer, Julien.",
@@ -1577,10 +1575,10 @@ def executer_navigateur(demande: dict, session: SessionNavigateur | None,
         reponse = session.envoyer(commande)
         if reponse.get("ok"):
             quoi = recherche or url
-            titre = reponse.get("titre") or ""
-            detail = msg(langue, "nav_titre", titre=titre) if titre else ""
-            return msg(langue, "nav_ouvert", quoi=quoi, detail=detail,
-                       url=reponse.get("url", url))
+            # Le titre et l'URL finale d'une page sont des données externes
+            # (règle §1) : ni prononcés, ni gardés dans l'historique du
+            # modèle. On ne répète que ce que Julien a demandé.
+            return msg(langue, "nav_ouvert", quoi=quoi)
         # Échec Playwright : repli sur le navigateur par défaut ci-dessous.
         print(f"Navigateur Playwright indisponible "
               f"({reponse.get('erreur', 'erreur inconnue')}) ; repli sur "
