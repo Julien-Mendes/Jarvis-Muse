@@ -44,6 +44,12 @@ from pathlib import Path
 
 RACINE = Path(__file__).resolve().parent.parent
 
+# Modules voisins importables même si ce fichier est chargé par chemin.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from verrou import VerrouInstance  # noqa: E402
+
 PHRASES_PRET = {"fr": "Jarvis prêt.", "en": "Jarvis ready."}
 
 
@@ -210,6 +216,14 @@ def main() -> int:
     if args.verifier:
         return verifier(python, pythonw)
 
+    # S1 — une seule session Jarvis : un second clic sur le raccourci ne doit
+    # pas démarrer une deuxième boucle ni une deuxième fenêtre.
+    verrou_session = VerrouInstance("lancer-app", RACINE / "data")
+    if not verrou_session.acquerir():
+        journal("Jarvis est déjà lancé : second lancement ignoré.")
+        avertir_windows("Jarvis est déjà lancé.\n"
+                        "Cherchez sa fenêtre (barre des tâches).")
+        return 0
     journal("Lancement de la session Jarvis (sans console).")
     surveillant = demarrer(
         "surveillant de minuteurs",

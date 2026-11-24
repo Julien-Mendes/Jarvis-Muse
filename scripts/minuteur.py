@@ -36,6 +36,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+# Modules voisins (verrou.py…) importables même si ce fichier est chargé
+# par chemin (tests, importlib) et non lancé comme script.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from verrou import VerrouInstance
+
 # Fuseau horaire de Julien (config/config.example.toml).
 FUSEAU = ZoneInfo("America/Toronto")
 
@@ -442,6 +449,14 @@ def cmd_declencher(args) -> int:
 
 
 def cmd_surveiller(args) -> int:
+    # S1 — un seul surveillant par fichier de minuteurs : deux surveillants
+    # annonceraient chaque minuteur deux fois. Le verrou est dans le dossier
+    # du fichier de minuteurs (data/ par défaut).
+    verrou = VerrouInstance("surveillant", Path(args.donnees).parent)
+    if not verrou.acquerir():
+        print("Le surveillant de minuteurs tourne déjà : celui-ci ne "
+              "démarre pas.", flush=True)
+        return 0
     debut = maintenant()
     print("Surveillance des minuteurs démarrée "
           "(vérification toutes les 30 secondes au plus).", flush=True)

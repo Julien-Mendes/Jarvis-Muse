@@ -99,6 +99,13 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+# Modules voisins (verrou.py…) importables même si ce fichier est chargé
+# par chemin (tests, importlib) et non lancé comme script.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from verrou import VerrouInstance
+
 # Fuseau horaire de Julien (config/config.example.toml).
 FUSEAU = ZoneInfo("America/Toronto")
 
@@ -2090,6 +2097,15 @@ def main() -> int:
         print("  pip install -r scripts/requirements-etape4.txt",
               file=sys.stderr)
         return 3
+
+    # S1 — une seule boucle vocale à la fois : sinon chaque F9 déclencherait
+    # deux réponses vocales. Le verrou tient tant que ce processus vit ; on
+    # garde la référence dans `verrou_instance` jusqu'à la fin de main().
+    verrou_instance = VerrouInstance("boucle", RACINE / "data")
+    if not verrou_instance.acquerir():
+        print("Jarvis écoute déjà : une autre boucle vocale est en cours. "
+              "Cette seconde boucle ne démarre pas.", file=sys.stderr)
+        return 4
 
     transcripteur = creer_transcripteur(config)
     cerveau = creer_cerveau(config)
