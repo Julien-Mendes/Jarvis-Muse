@@ -48,6 +48,7 @@ import argparse
 import base64
 import io
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -172,11 +173,136 @@ def charger_config(racine: Path) -> dict:
 # Capture ciblée
 # ---------------------------------------------------------------------------
 
-def fenetre_active_bbox() -> tuple:
-    """Rectangle (gauche, haut, droite, bas) de la fenêtre active, Windows.
+_DPI_ACTIF = False
 
-    Utilise DWMWA_EXTENDED_FRAME_BOUNDS (sans l'ombre de la fenêtre) avec
-    repli sur GetWindowRect. Windows seulement.
+
+def activer_dpi() -> bool:
+    """Rend le processus « DPI-aware » (Windows) avant toute capture.
+
+    Sans cela, sur un écran réglé à 125 % ou 150 %, Windows donne des
+    coordonnées « virtualisées » : le rectangle de la fenêtre et la capture
+    ne tombent pas au même endroit (image décalée ou tronquée, bug F4). À
+    appeler une seule fois, avant d'utiliser fenêtre ou capture. Sans effet
+    hors Windows. Retourne True si un mode a pu être activé (ou l'était déjà).
+    """
+    global _DPI_ACTIF
+    if _DPI_ACTIF or sys.platform != "win32":
+        return _DPI_ACTIF
+    import ctypes
+
+    try:
+        # Per-monitor v2 (Windows 10 1703+) ; -4 = DPI_AWARENESS_CONTEXT.
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(
+            ctypes.c_void_p(-4))
+        _DPI_ACTIF = True
+    except (AttributeError, OSError):
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per-monitor
+            _DPI_ACTIF = True
+        except (AttributeError, OSError):
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()
+                _DPI_ACTIF = True
+            except (AttributeError, OSError):
+                _DPI_ACTIF = False
+    return _DPI_ACTIF
+
+
+# Fenêtres de Jarvis lui-même : la capture « fenêtre active » ne doit jamais
+# décrire Jarvis (quand Julien parle par le bouton micro ou le champ texte de
+# l'application, la fenêtre active EST Jarvis). Titres posés par app.py
+# (« Jarvis », « Historique — Jarvis ») et hud.py (« Jarvis »), classe Tk.
+TITRE_JARVIS = re.compile(r"^(Historique — )?Jarvis( — .*)?$")
+# Fenêtres du shell Windows : jamais une cible de capture de remplacement.
+CLASSES_SHELL = {"Progman", "WorkerW", "Shell_TrayWnd",
+                 "Shell_SecondaryTrayWnd"}
+
+
+def est_fenetre_jarvis(titre: str, classe: str) -> bool:
+    """Vrai si la fenêtre est une fenêtre Tk de Jarvis (app, historique, HUD).
+
+    Le titre seul ne suffit pas (un onglet de navigateur « Jarvis » ne doit
+    pas être écarté) : la classe doit être celle d'une fenêtre Tk.
+    """
+    return (str(classe).startswith("Tk")
+            and TITRE_JARVIS.match(str(titre or "").strip()) is not None)
+
+
+def choisir_fenetre(fenetres: list) -> dict | None:
+    """Choisit la fenêtre à capturer parmi la pile, de l'avant vers l'arrière.
+
+    `fenetres` : dicts {hwnd, titre, classe, visible, reduite, masquee},
+    premier élément = fenêtre active. Si la fenêtre active n'est pas Jarvis,
+    c'est elle (comportement inchangé, y compris le bureau). Si c'est
+    Jarvis, on prend la première fenêtre derrière elle qui est visible,
+    non réduite, non masquée, avec un titre, hors shell et hors Jarvis.
+    Retourne None si rien ne convient.
+    """
+    if not fenetres:
+        return None
+    premiere = fenetres[0]
+    if not est_fenetre_jarvis(premiere.get("titre", ""),
+                              premiere.get("classe", "")):
+        return premiere
+    for fenetre in fenetres[1:]:
+        if (fenetre.get("visible") and not fenetre.get("reduite")
+                and not fenetre.get("masquee")
+                and str(fenetre.get("titre", "")).strip()
+                and fenetre.get("classe") not in CLASSES_SHELL
+                and not est_fenetre_jarvis(fenetre.get("titre", ""),
+                                           fenetre.get("classe", ""))):
+            return fenetre
+    return None
+
+
+def _pile_de_fenetres(profondeur: int = 60) -> list:
+    """Fenêtres du premier plan vers l'arrière-plan (ordre Z), Windows."""
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.GetWindow.restype = wintypes.HWND
+    user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsIconic.argtypes = [wintypes.HWND]
+    user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR,
+                                      ctypes.c_int]
+    user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR,
+                                     ctypes.c_int]
+    hwnd = user32.GetForegroundWindow()
+    pile = []
+    while hwnd and len(pile) < profondeur:
+        titre = ctypes.create_unicode_buffer(512)
+        classe = ctypes.create_unicode_buffer(256)
+        user32.GetWindowTextW(hwnd, titre, 512)
+        user32.GetClassNameW(hwnd, classe, 256)
+        masque = ctypes.c_int(0)
+        try:
+            # DWMWA_CLOAKED = 14 : fenêtre « fantôme » (autre bureau virtuel,
+            # application UWP suspendue).
+            ctypes.windll.dwmapi.DwmGetWindowAttribute(
+                wintypes.HWND(hwnd), 14, ctypes.byref(masque),
+                ctypes.sizeof(masque))
+        except (AttributeError, OSError):
+            pass
+        pile.append({"hwnd": hwnd, "titre": titre.value,
+                     "classe": classe.value,
+                     "visible": bool(user32.IsWindowVisible(hwnd)),
+                     "reduite": bool(user32.IsIconic(hwnd)),
+                     "masquee": masque.value != 0})
+        hwnd = user32.GetWindow(hwnd, 2)  # GW_HWNDNEXT : plus en arrière.
+    return pile
+
+
+def fenetre_active_bbox() -> tuple:
+    """Rectangle (gauche, haut, droite, bas) de la fenêtre à capturer, Windows.
+
+    C'est la fenêtre active, sauf si c'est Jarvis lui-même : on prend alors
+    la dernière fenêtre active autre que Jarvis (la première derrière lui
+    dans l'ordre Z). Utilise DWMWA_EXTENDED_FRAME_BOUNDS (sans l'ombre de la
+    fenêtre) avec repli sur GetWindowRect, en coordonnées physiques (DPI).
+    Windows seulement.
     """
     if sys.platform != "win32":
         raise RuntimeError(
@@ -185,20 +311,27 @@ def fenetre_active_bbox() -> tuple:
     import ctypes
     from ctypes import wintypes
 
+    activer_dpi()
     user32 = ctypes.windll.user32
-    hwnd = user32.GetForegroundWindow()
-    if not hwnd:
+    pile = _pile_de_fenetres()
+    if not pile:
         raise RuntimeError("Aucune fenêtre active détectée.")
+    cible = choisir_fenetre(pile)
+    if cible is None:
+        raise RuntimeError(
+            "Aucune fenêtre à décrire : seule la fenêtre de Jarvis est "
+            "ouverte. Ouvrez la fenêtre à regarder, puis redemandez.")
+    hwnd = cible["hwnd"]
     rect = wintypes.RECT()
     try:
         dwmapi = ctypes.windll.dwmapi
         # DWMWA_EXTENDED_FRAME_BOUNDS = 9.
         resultat = dwmapi.DwmGetWindowAttribute(
-            hwnd, 9, ctypes.byref(rect), ctypes.sizeof(rect))
+            wintypes.HWND(hwnd), 9, ctypes.byref(rect), ctypes.sizeof(rect))
         if resultat != 0:
             raise OSError(f"DwmGetWindowAttribute : code {resultat}")
     except (AttributeError, OSError):
-        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+        user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(rect))
     return (rect.left, rect.top, rect.right, rect.bottom)
 
 
@@ -231,7 +364,12 @@ def capturer(bbox: tuple | None):
         print("  pip install -r scripts/requirements-etape5.txt",
               file=sys.stderr)
         raise SystemExit(3)
+    activer_dpi()
     try:
+        # all_screens=True : un rectangle sur un second écran (coordonnées
+        # négatives ou au-delà de l'écran principal) reste capturable.
+        if sys.platform == "win32":
+            return ImageGrab.grab(bbox=bbox, all_screens=True)
         return ImageGrab.grab(bbox=bbox)
     except (NotImplementedError, OSError) as erreur:
         print("Erreur : la capture d'écran n'est pas possible sur cette "
