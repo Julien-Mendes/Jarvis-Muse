@@ -1,0 +1,139 @@
+diff --git a/config/config.example.toml b/config/config.example.toml
+index 62b18e1..4fef518 100644
+--- a/config/config.example.toml
++++ b/config/config.example.toml
+@@ -42,7 +42,12 @@ touche_push_to_talk = "F9"
+ # boucle (pas une API temps réel) — la boucle fait un appel API par tour.
+ fournisseur_llm = "groq"
+ modele_groq = "openai/gpt-oss-120b"
+-modele_anthropic = "claude-haiku-4-5-20251001"
++modele_anthropic = "claude-haiku-5-5"
++# Effort de raisonnement (voix = latence d'abord) : "low" recommandé.
++# Groq gpt-oss : low | medium | high. Haiku 5.5 : low | medium (défaut API)
++# | high | xhigh | max. "" = ne rien envoyer (défaut du fournisseur).
++effort_groq = "low"
++effort_anthropic = "low"
+ # Transcription par défaut : Groq Whisper (whisper-large-v3-turbo).
+ # "local" = faster-whisper hors ligne (décision bloc 5, encore ouverte).
+ fournisseur_stt = "groq"
+diff --git a/scripts/boucle_voix.py b/scripts/boucle_voix.py
+index 2b9f21f..c861467 100644
+--- a/scripts/boucle_voix.py
++++ b/scripts/boucle_voix.py
+@@ -122,7 +122,13 @@ SCRIPT_APP = RACINE / "scripts" / "app.py"
+ DEFAUTS = {
+     "fournisseur_llm": "groq",        # "groq" ou "anthropic".
+     "modele_groq": "openai/gpt-oss-120b",
+-    "modele_anthropic": "claude-haiku-4-5-20251001",
++    "modele_anthropic": "claude-haiku-5-5",
++    # Effort de raisonnement : "low" = le plus rapide (recommandé en voix).
++    # Groq/gpt-oss : low | medium | high. Anthropic/Haiku 5.5 : low | medium
++    # (défaut API) | high | xhigh | max. Chaîne vide = ne rien envoyer
++    # (comportement par défaut du fournisseur).
++    "effort_groq": "low",
++    "effort_anthropic": "low",
+     "fournisseur_stt": "groq",        # "groq" ou "local" (faster-whisper).
+     "modele_stt_groq": "whisper-large-v3-turbo",
+     "modele_stt_local": "base",
+@@ -269,10 +275,12 @@ FICHIER_DEMANDE_TEXTE = RACINE / "data" / "texte-demande.json"
+ FRAICHEUR_DEMANDE_TEXTE = 300.0  # secondes : une demande plus vieille est ignorée.
+ DOSSIER_TOURS = RACINE / "logs"
+ 
+-# Tarifs estimés (Anthropic Haiku, à vérifier sur console.anthropic.com) —
+-# Groq est gratuit (coût 0). Taux USD→GBP approximatif.
+-TARIF_ANTHROPIC_ENTREE_USD_PAR_MILLION = 1.00
+-TARIF_ANTHROPIC_SORTIE_USD_PAR_MILLION = 5.00
++# Tarifs estimés (Anthropic Claude Haiku 5.5, prompts <= 100 000 jetons :
++# 0,10 $ / 0,50 $ par million ; au-delà 0,50 $ / 2,50 $ — nos prompts sont
++# très en dessous). À vérifier sur platform.claude.com/docs/en/about-claude/
++# pricing. Groq est gratuit (coût 0). Taux USD→GBP approximatif.
++TARIF_ANTHROPIC_ENTREE_USD_PAR_MILLION = 0.10
++TARIF_ANTHROPIC_SORTIE_USD_PAR_MILLION = 0.50
+ TAUX_USD_GBP = 0.79
+ 
+ 
+@@ -791,19 +799,27 @@ OUTIL_NAVIGATEUR_ANTHROPIC = {
+ class CerveauGroq:
+     """Cerveau par défaut : Groq, gpt-oss-120b (palier gratuit, sans carte)."""
+ 
+-    def __init__(self, cle_api: str, modele: str, max_tokens: int):
++    def __init__(self, cle_api: str, modele: str, max_tokens: int,
++                 effort: str = ""):
+         from groq import Groq
+ 
+         self.client = Groq(api_key=cle_api)
+         self.modele = modele
+         self.max_tokens = max_tokens
++        self.effort = effort
+ 
+     def repondre(self, messages: list, outils: list) -> dict:
+         """Un tour de LLM. Retourne {"texte": str, "appels_outils": [...],
+         "utilisation": {"entree": int, "sortie": int}}."""
++        # reasoning_effort (gpt-oss : low | medium | high) passe par
++        # extra_body : fonctionne quelle que soit la version du SDK groq.
++        # Les jetons de raisonnement comptent dans max_tokens : si les
++        # réponses reviennent vides, augmenter max_tokens_reponse.
++        extra = {"reasoning_effort": self.effort} if self.effort else {}
+         reponse = self.client.chat.completions.create(
+             model=self.modele, messages=messages, tools=outils,
+-            tool_choice="auto", max_tokens=self.max_tokens, temperature=0.3)
++            tool_choice="auto", max_tokens=self.max_tokens, temperature=0.3,
++            extra_body=extra or None)
+         message = reponse.choices[0].message
+         appels = []
+         for appel in (message.tool_calls or []):
+@@ -841,12 +857,14 @@ class CerveauGroq:
+ class CerveauAnthropic:
+     """Alternative configurable : Claude Haiku par API (payant à l'usage)."""
+ 
+-    def __init__(self, cle_api: str, modele: str, max_tokens: int):
++    def __init__(self, cle_api: str, modele: str, max_tokens: int,
++                 effort: str = ""):
+         from anthropic import Anthropic
+ 
+         self.client = Anthropic(api_key=cle_api)
+         self.modele = modele
+         self.max_tokens = max_tokens
++        self.effort = effort
+ 
+     def repondre(self, messages: list, outils: list) -> dict:
+         """Un tour de LLM. Retourne {"texte": str, "appels_outils": [...],
+@@ -859,9 +877,17 @@ class CerveauAnthropic:
+             "description": o["description"],
+             "input_schema": o["input_schema"],
+         } for o in outils]
++        # Haiku 5.5 : réflexion adaptative active par défaut, effort "medium"
++        # par défaut. output_config.effort passe par extra_body (indépendant
++        # de la version du SDK anthropic). Ne PAS envoyer temperature /
++        # top_p / top_k avec ce modèle. Les jetons de réflexion comptent
++        # dans max_tokens.
++        extra = ({"output_config": {"effort": self.effort}}
++                 if self.effort else {})
+         reponse = self.client.messages.create(
+             model=self.modele, max_tokens=self.max_tokens, system=systeme,
+-            messages=conversation, tools=outils_anthropic)
++            messages=conversation, tools=outils_anthropic,
++            extra_body=extra or None)
+         texte = ""
+         appels = []
+         for bloc in reponse.content:
+@@ -905,7 +931,8 @@ def creer_cerveau(config: dict):
+         try:
+             return CerveauAnthropic(
+                 cle, config["modele_anthropic"],
+-                config["max_tokens_reponse"])
++                config["max_tokens_reponse"],
++                str(config.get("effort_anthropic", "") or ""))
+         except ImportError:
+             print("Erreur : le module anthropic n'est pas installé.",
+                   file=sys.stderr)
+@@ -926,7 +953,8 @@ def creer_cerveau(config: dict):
+         raise SystemExit(3)
+     try:
+         return CerveauGroq(cle, config["modele_groq"],
+-                           config["max_tokens_reponse"])
++                           config["max_tokens_reponse"],
++                           str(config.get("effort_groq", "") or ""))
+     except ImportError:
+         print("Erreur : le module groq n'est pas installé.", file=sys.stderr)
+         print("Installez-le avec :", file=sys.stderr)
