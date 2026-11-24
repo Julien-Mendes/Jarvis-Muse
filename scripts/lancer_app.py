@@ -36,6 +36,7 @@ Usage :
 """
 
 import argparse
+import os
 import subprocess
 import sys
 import time
@@ -85,8 +86,13 @@ def demarrer(nom: str, commande: list, fichier_log: str):
     try:
         DOSSIER_LOGS.mkdir(parents=True, exist_ok=True)
         sortie = (DOSSIER_LOGS / fichier_log).open("a", encoding="utf-8")
+        # UTF-8 forcé pour les enfants : sous Windows, leur sortie
+        # redirigée vers un fichier hérite sinon du codage cp1252, qui
+        # plante sur les émojis (ex. 🎙️ dans boucle_voix.py).
+        env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
         processus = subprocess.Popen(
-            commande, cwd=str(RACINE), stdout=sortie, stderr=subprocess.STDOUT)
+            commande, cwd=str(RACINE), stdout=sortie,
+            stderr=subprocess.STDOUT, env=env)
         journal(f"{nom} démarré (pid {processus.pid}).")
         return processus
     except OSError as erreur:
