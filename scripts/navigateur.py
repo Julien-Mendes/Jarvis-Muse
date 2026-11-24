@@ -150,8 +150,10 @@ class Navigateur:
 
     def naviguer(self, url: str) -> dict:
         """Va à l'URL et retourne titre + URL finale."""
-        self._assurer_demarre()
+        # Valider avant de lancer Chromium : une adresse refusée ne doit
+        # pas ouvrir de fenêtre.
         url = normaliser_url(url)
+        self._assurer_demarre()
         self.page.goto(url, timeout=TIMEOUT_NAVIGATION_MS,
                        wait_until="domcontentloaded")
         time.sleep(DELAI_APRES_NAVIGATION)
@@ -163,10 +165,12 @@ class Navigateur:
         Si le clic échoue, la page de résultats reste ouverte pour que
         Julien clique lui-même — on retourne quand même titre + URL.
         """
-        self._assurer_demarre()
+        # Valider avant de lancer Chromium : une requête vide ne doit pas
+        # ouvrir de fenêtre (bug F1 : le navigateur s'ouvrait puis échouait).
         requete = (requete or "").strip()
         if not requete:
             raise ValueError("Requête de recherche vide.")
+        self._assurer_demarre()
         self.page.goto(url_recherche(requete),
                        timeout=TIMEOUT_NAVIGATION_MS,
                        wait_until="domcontentloaded")

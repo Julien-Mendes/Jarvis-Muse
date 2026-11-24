@@ -1580,9 +1580,17 @@ def executer_navigateur(demande: dict, session: SessionNavigateur | None,
     recherche = (demande.get("recherche") or "").strip()
     if not url and not recherche:
         return msg(langue, "nav_manque_site")
-    if session is not None:
+    # Réglage [navigateur] navigateur_defaut : « systeme » = les sites
+    # s'ouvrent dans le vrai navigateur par défaut de Julien (ses
+    # connexions, ses profils) ; Playwright est alors réservé aux
+    # recherches. « playwright » = tout passe par Playwright.
+    mode = str(config.get("navigateur_defaut", "systeme")).strip().lower()
+    utiliser_playwright = bool(recherche) or mode == "playwright"
+    if session is not None and utiliser_playwright:
+        # Le champ de la recherche s'appelle « requete » : c'est ce que lit
+        # navigateur.py (boucle_interactive). Test de contrat : T1.
         commande = ({"commande": "naviguer", "url": url} if url
-                    else {"commande": "rechercher", "recherche": recherche})
+                    else {"commande": "rechercher", "requete": recherche})
         reponse = session.envoyer(commande)
         if reponse.get("ok"):
             quoi = recherche or url
