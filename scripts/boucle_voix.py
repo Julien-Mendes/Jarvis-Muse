@@ -1450,7 +1450,8 @@ def executer_ecran(demande: dict, config: dict) -> str:
     contient.
     """
     langue = str(config["langue"])
-    commande = [sys.executable, str(SCRIPT_YEUX), "decrire", "--fenetre"]
+    commande = [sys.executable, str(SCRIPT_YEUX), "decrire", "--fenetre",
+                "--langue", langue]
     if demande.get("question"):
         commande += ["--question", demande["question"]]
     try:
