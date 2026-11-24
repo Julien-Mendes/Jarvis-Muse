@@ -42,7 +42,12 @@ touche_push_to_talk = "F9"
 # boucle (pas une API temps réel) — la boucle fait un appel API par tour.
 fournisseur_llm = "groq"
 modele_groq = "openai/gpt-oss-120b"
-modele_anthropic = "claude-haiku-4-5-20251001"
+modele_anthropic = "claude-haiku-5-5"
+# Effort de raisonnement (voix = latence d'abord) : "low" recommandé.
+# Groq gpt-oss : low | medium | high. Haiku 5.5 : low | medium (défaut API)
+# | high | xhigh | max. "" = ne rien envoyer (défaut du fournisseur).
+effort_groq = "low"
+effort_anthropic = "low"
 # Transcription par défaut : Groq Whisper (whisper-large-v3-turbo).
 # "local" = faster-whisper hors ligne (décision bloc 5, encore ouverte).
 fournisseur_stt = "groq"
