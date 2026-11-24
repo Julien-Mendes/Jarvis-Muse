@@ -1011,6 +1011,12 @@ MESSAGES = {
             "Outil inconnu : je sais régler des minuteurs, "
             "regarder l'écran (avec confirmation) et ouvrir "
             "le navigateur."),
+        "outil_bloque": (
+            "Action refusée : ce tour a lu du contenu externe, donc aucune "
+            "écriture n'est permise. Dis à Julien de la redemander dans un "
+            "nouveau tour."),
+        "historique_externe": ("[Contenu externe lu à Julien à voix haute ; "
+                               "non conservé dans l'historique.]"),
     },
     "en": {
         "ecran_vu": "Here's what I see on your screen, Julien: {description}",
@@ -1043,6 +1049,11 @@ MESSAGES = {
         "outil_inconnu": (
             "Unknown tool: I can set timers, look at the screen "
             "(with confirmation) and open the browser."),
+        "outil_bloque": (
+            "Action refused: this turn read external content, so no writes "
+            "are allowed. Tell Julien to ask again in a new turn."),
+        "historique_externe": ("[External content read aloud to Julien; not "
+                               "kept in history.]"),
     },
 }
 
@@ -1602,9 +1613,27 @@ def executer_navigateur(demande: dict, session: SessionNavigateur | None,
 # Traitement d'un tour : transcription -> réponse
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# hold_writes (règle §2) et confirmations (règle §3)
+# ---------------------------------------------------------------------------
+# Une confirmation orale ne vaut que pour le tour suivant ET dans ce délai :
+# un « oui » dit longtemps après la question n'arme rien.
+DELAI_CONFIRMATION_S = 30.0
+# Outils qui renvoient au modèle du texte venu de l'extérieur (page web,
+# document…). Aucun aujourd'hui : la description d'écran est lue à Julien
+# sans passer par le modèle. Tout futur outil de lecture DOIT être ajouté ici
+# et envelopper son résultat dans <untrusted_data> (règle §1).
+OUTILS_LECTURE_EXTERNE: set = set()
+# Après une lecture externe dans le tour, seuls ces outils restent permis.
+# Liste d'autorisation : un outil ajouté plus tard est refusé tant qu'on ne
+# l'a pas déclaré « sans écriture » ici (échec fermé).
+OUTILS_SANS_ECRITURE = {"decrire_ecran", "ouvrir_navigateur"}
+
+
 def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
                 donnees: Path | None, confirmation: dict | None = None,
-                session_navigateur=None, mesures: dict | None = None) -> str:
+                session_navigateur=None, mesures: dict | None = None,
+                etat_tour: dict | None = None) -> str:
     """Traite une phrase entendue et retourne la réponse à lire à voix haute.
 
     `confirmation` est un dict partagé entre les tours ({"outil": ...,
@@ -1616,6 +1645,11 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
     des tours : durée LLM cumulée ("llm_s"), jetons ("entree_tokens",
     "sortie_tokens"), noms des outils utilisés ("outils"), erreur éventuelle
     ("erreur"). Il ne contient jamais le contenu de la conversation.
+
+    `etat_tour` (optionnel) reçoit "externe" = True quand la réponse contient
+    du texte venu de l'extérieur (description d'écran, futur outil de
+    lecture) : l'appelant ne doit alors PAS la garder telle quelle dans
+    l'historique donné au modèle (règles §1 et §2).
     """
     if mesures is not None:
         mesures.setdefault("llm_s", 0.0)
@@ -1624,6 +1658,11 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
         mesures.setdefault("outils", [])
 
     langue = str(config["langue"])
+    if etat_tour is None:
+        etat_tour = {}
+    # hold_writes (§2) : vrai dès qu'un outil a lu du texte externe dans ce
+    # tour ; plus aucune écriture n'est alors permise (voir la boucle d'outils).
+    lecture_externe = False
 
     def _outil(nom: str) -> None:
         """Enregistre un outil utilisé dans les mesures (sans doublon)."""
@@ -1636,12 +1675,17 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
     if confirmation is not None and confirmation.get("outil"):
         en_attente = dict(confirmation)
         confirmation.clear()
-        if est_confirmation_courte(transcription):
+        # Sans horodatage d'armement (« arme_a »), la confirmation est
+        # considérée périmée : échec fermé.
+        perimee = (time.monotonic() - en_attente.get("arme_a", 0.0)
+                   > DELAI_CONFIRMATION_S)
+        if not perimee and est_confirmation_courte(transcription):
             if en_attente["outil"] == "decrire_ecran":
                 _outil("decrire_ecran")
                 description = executer_ecran(
                     en_attente.get("arguments", {}), config)
                 if description.startswith("<untrusted_data"):
+                    etat_tour["externe"] = True
                     return msg(langue, "ecran_vu",
                                description=description.split("\n", 1)[1]
                                .rsplit("\n</untrusted_data>", 1)[0].strip())
@@ -1658,6 +1702,7 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
         if confirmation is not None:
             confirmation["outil"] = "decrire_ecran"
             confirmation["arguments"] = demande_ecran
+            confirmation["arme_a"] = time.monotonic()
         return msg(langue, "ecran_demande")
     demande_navigateur = detecter_ouverture(transcription)
     if demande_navigateur is not None:
@@ -1698,7 +1743,11 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
             for appel in reponse["appels_outils"]:
                 _outil(appel["nom"])
                 args = appel["arguments"] or {}
-                if appel["nom"] == "regler_minuteur":
+                if (lecture_externe
+                        and appel["nom"] not in OUTILS_SANS_ECRITURE):
+                    # hold_writes (§2) : refusé, sans exécuter quoi que ce soit.
+                    resultat_outil = msg(langue, "outil_bloque")
+                elif appel["nom"] == "regler_minuteur":
                     demande_outil = {
                         "minutes": args.get("minutes"),
                         "a": args.get("a"),
@@ -1720,6 +1769,7 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
                         confirmation["arguments"] = {
                             "question": args.get("question", "") or "",
                         }
+                        confirmation["arme_a"] = time.monotonic()
                     resultat_outil = msg(langue, "outil_ecran_confirmation")
                 elif appel["nom"] == "ouvrir_navigateur":
                     resultat_outil = executer_navigateur(
@@ -1728,6 +1778,9 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
                         session_navigateur, config)
                 else:
                     resultat_outil = msg(langue, "outil_inconnu")
+                if appel["nom"] in OUTILS_LECTURE_EXTERNE:
+                    lecture_externe = True
+                    etat_tour["externe"] = True
                 if est_groq:
                     messages.append({
                         "role": "tool",
@@ -2100,13 +2153,19 @@ def main() -> int:
                     continue
                 print(f"Julien : {transcription}")
                 ecrire_etat_hud("reflexion", transcription=transcription)
+            etat_tour: dict = {}
             reponse = traiter_tour(transcription, config, cerveau,
                                    historique, args.donnees,
                                    confirmation_en_attente,
-                                   session_navigateur, mesures=bilan)
+                                   session_navigateur, mesures=bilan,
+                                   etat_tour=etat_tour)
             journaliser_echange(transcription, reponse)
             historique.append({"role": "user", "content": transcription})
-            historique.append({"role": "assistant", "content": reponse})
+            # Règles §1/§2 : un texte venu de l'extérieur (description
+            # d'écran…) est lu à Julien mais jamais redonné au modèle.
+            historique.append({"role": "assistant", "content": (
+                msg(str(config["langue"]), "historique_externe")
+                if etat_tour.get("externe") else reponse)})
             historique = historique[-20:]
             # Premier jeton ≈ réponse complète (client non diffusant) ;
             # premier audio = jusqu'au lancement de la lecture vocale.
