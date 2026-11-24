@@ -1,0 +1,11 @@
+#!/bin/sh
+# Hook Git versionné (activé par `python scripts/proteger_depot.py --appliquer`) :
+# refuse un commit qui contient une clé API ou un fichier privé (S5).
+racine="$(git rev-parse --show-toplevel)"
+for python in python python3 py; do
+    if command -v "$python" >/dev/null 2>&1; then
+        exec "$python" "$racine/scripts/verifier_secrets.py" --index
+    fi
+done
+echo "Avertissement : Python introuvable, contrôle des secrets ignoré." >&2
+exit 0
