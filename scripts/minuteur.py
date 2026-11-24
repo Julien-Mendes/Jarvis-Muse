@@ -17,8 +17,9 @@ survivent à un redémarrage. Ceux arrivés à échéance pendant que la machine
 était éteinte sont annoncés au démarrage de la surveillance.
 
 À l'échéance : carillon + annonce vocale via scripts/lire_voix.py (Piper,
-voix locale). Si la voix n'est pas disponible, le message est affiché à
-l'écran et le carillon est joué quand même.
+voix locale), dans la langue de config.toml ([boucle] langue, relue à chaque
+annonce ; --langue fr|en la remplace). Si la voix n'est pas disponible, le
+message est affiché à l'écran et le carillon est joué quand même.
 
 Limites (patron du dépôt B, décisions du 21 nov. 2026) :
   - 20 minuteurs actifs maximum.
@@ -46,11 +47,42 @@ LONGUEUR_MAX_ETIQUETTE = 80
 JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet",
         "août", "septembre", "octobre", "novembre", "décembre"]
+JOURS_EN = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
+            "Saturday", "Sunday"]
+MOIS_EN = ["January", "February", "March", "April", "May", "June", "July",
+           "August", "September", "October", "November", "December"]
 
 
 def maintenant() -> datetime:
     """Heure locale actuelle."""
     return datetime.now(FUSEAU)
+
+
+def langue_courante(dossier_config: Path | None = None) -> str:
+    """Langue des annonces : « fr » ou « en ».
+
+    Celle de config.toml ([boucle] langue), sinon de config.example.toml,
+    comme boucle_voix.py ; « en » si rien n'est lisible. Relue à chaque
+    annonce : changer la langue n'exige pas de redémarrer `surveiller`.
+    """
+    dossier = dossier_config or (Path(__file__).resolve().parent.parent
+                                 / "config")
+    for nom in ("config.toml", "config.example.toml"):
+        chemin = dossier / nom
+        if not chemin.exists():
+            continue
+        try:
+            try:
+                import tomllib
+            except ModuleNotFoundError:
+                import tomli as tomllib
+            with chemin.open("rb") as fichier:
+                langue = str(tomllib.load(fichier).get("boucle", {})
+                             .get("langue", "en"))
+        except (OSError, ValueError, ImportError):
+            return "en"
+        return langue if langue in ("fr", "en") else "en"
+    return "en"
 
 
 def chemin_donnees_defaut() -> Path:
@@ -114,6 +146,32 @@ def formater_echeance(due: datetime, ref: datetime) -> str:
             f"à {heure}")
 
 
+def formater_echeance_en(due: datetime, ref: datetime) -> str:
+    """« today at 6:42 PM », « tomorrow at 9:00 AM », « on Saturday, November 22 at 10:00 AM »."""
+    heure = f"{(due.hour % 12) or 12}:{due.minute:02d} {'AM' if due.hour < 12 else 'PM'}"
+    if due.date() == ref.date():
+        return f"today at {heure}"
+    if due.date() == (ref + timedelta(days=1)).date():
+        return f"tomorrow at {heure}"
+    return (f"on {JOURS_EN[due.weekday()]}, {MOIS_EN[due.month - 1]} "
+            f"{due.day} at {heure}")
+
+
+def message_echeance_en(minuteur: dict, quand: datetime, ref: datetime,
+                        manque: bool) -> str:
+    """Message d'échéance en anglais (même sens que les messages français)."""
+    etiquette = minuteur["label"]
+    genre = "timer" if minuteur["kind"] == "timer" else "reminder"
+    if manque:
+        nom = f'"{etiquette}" ' if etiquette else ""
+        return (f"While I was off, your {genre} {nom}came due "
+                f"{formater_echeance_en(quand, ref)}.")
+    if minuteur["kind"] == "timer":
+        return (f'Your timer "{etiquette}" is done.' if etiquette
+                else "Your timer is done.")
+    return f"Reminder: {etiquette}." if etiquette else "Your reminder is due."
+
+
 def nettoyer_etiquette(etiquette: str) -> str:
     """Normalise l'étiquette (espaces, 80 caractères maximum)."""
     return " ".join(etiquette.split())[:LONGUEUR_MAX_ETIQUETTE]
@@ -161,8 +219,11 @@ def carillon() -> None:
     winsound.Beep(1318, 600)
 
 
-def annoncer(message: str) -> None:
+def annoncer(message: str, langue: str = "fr") -> None:
     """Carillon + lecture du message à voix haute via lire_voix.py.
+
+    `langue` (« fr » ou « en ») choisit la voix : elle doit être celle du
+    message (voir declencher_dus).
 
     Si la voix n'est pas disponible (Piper non installé, voix absente), le
     message est affiché à l'écran : l'alerte n'est jamais perdue.
@@ -171,11 +232,11 @@ def annoncer(message: str) -> None:
     carillon()
     script_voix = Path(__file__).resolve().parent / "lire_voix.py"
     try:
-        # Messages en français : forcer la voix française (UPMC), même si la
-        # langue par défaut de la boucle est l'anglais (décision 21 nov. 2026).
+        # La voix suit la langue du message, donc la langue de la config
+        # (décision de Julien, 22 nov. 2026 : fini le français forcé).
         resultat = subprocess.run(
             [sys.executable, str(script_voix), "--texte", message,
-             "--langue", "fr"],
+             "--langue", langue],
             capture_output=True, text=True, timeout=120,
         )
         if resultat.returncode != 0:
@@ -199,8 +260,11 @@ def annoncer(message: str) -> None:
 # Déclenchement des minuteurs échus
 # ---------------------------------------------------------------------------
 
-def declencher_dus(chemin: Path, debut_surveillance=None) -> list:
+def declencher_dus(chemin: Path, debut_surveillance=None,
+                   langue: str | None = None) -> list:
     """Annonce et retire tous les minuteurs échus. Retourne les messages.
+
+    `langue` : « fr » ou « en » ; None = langue de la config (relue ici).
 
     Si debut_surveillance est fourni (démarrage de `surveiller`), les
     minuteurs échus avant (début - 1 minute) sont annoncés comme manqués
@@ -216,6 +280,7 @@ def declencher_dus(chemin: Path, debut_surveillance=None) -> list:
     )
     if not dus:
         return []
+    langue = langue or langue_courante()
     etat["timers"] = [m for m in minuteurs if m not in dus]
     sauvegarder(chemin, etat)
 
@@ -223,7 +288,12 @@ def declencher_dus(chemin: Path, debut_surveillance=None) -> list:
     for minuteur in dus:
         quand = datetime.fromisoformat(minuteur["due"])
         etiquette = minuteur["label"]
-        if debut_surveillance and quand < debut_surveillance - timedelta(minutes=1):
+        if langue == "en":
+            messages.append(message_echeance_en(
+                minuteur, quand, ref,
+                bool(debut_surveillance
+                     and quand < debut_surveillance - timedelta(minutes=1))))
+        elif debut_surveillance and quand < debut_surveillance - timedelta(minutes=1):
             messages.append(
                 f"Pendant que j'étais éteint, ton {minuteur['kind']} "
                 f"{'« ' + etiquette + ' » ' if etiquette else ''}"
@@ -237,7 +307,7 @@ def declencher_dus(chemin: Path, debut_surveillance=None) -> list:
                 f"Rappel : {etiquette}." if etiquette
                 else "Ton rappel est arrivé à échéance.")
     for message in messages:
-        annoncer(message)
+        annoncer(message, langue)
     return messages
 
 
@@ -365,7 +435,7 @@ def cmd_annuler(args) -> int:
 
 
 def cmd_declencher(args) -> int:
-    messages = declencher_dus(args.donnees)
+    messages = declencher_dus(args.donnees, langue=args.langue)
     if not messages:
         print("Aucun minuteur arrivé à échéance.")
     return 0
@@ -376,7 +446,7 @@ def cmd_surveiller(args) -> int:
     print("Surveillance des minuteurs démarrée "
           "(vérification toutes les 30 secondes au plus).", flush=True)
     print("Arrêter avec Ctrl+C.", flush=True)
-    declencher_dus(args.donnees, debut_surveillance=debut)
+    declencher_dus(args.donnees, debut_surveillance=debut, langue=args.langue)
     try:
         while True:
             etat = charger(args.donnees)
@@ -389,7 +459,7 @@ def cmd_surveiller(args) -> int:
             else:
                 attente = 30.0
             time.sleep(attente)
-            declencher_dus(args.donnees)
+            declencher_dus(args.donnees, langue=args.langue)
     except KeyboardInterrupt:
         print("\nSurveillance arrêtée. Les minuteurs restent enregistrés.")
     return 0
@@ -401,6 +471,10 @@ def main() -> int:
     parser.add_argument(
         "--donnees", type=Path, default=None,
         help="Fichier JSON de persistance (défaut : data/timers.json).",
+    )
+    parser.add_argument(
+        "--langue", choices=["fr", "en"], default=None,
+        help="Langue des annonces (défaut : celle de config.toml, [boucle] langue).",
     )
     sous = parser.add_subparsers(dest="commande", required=True)
 
