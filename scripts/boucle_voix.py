@@ -104,10 +104,11 @@ from zoneinfo import ZoneInfo
 if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import config_jarvis
 from verrou import VerrouInstance
 
-# Fuseau horaire de Julien (config/config.example.toml).
-FUSEAU = ZoneInfo("America/Toronto")
+# Fuseau horaire : [general] fuseau_horaire de la configuration (K1).
+FUSEAU = config_jarvis.fuseau()
 
 JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet",
@@ -139,7 +140,9 @@ DEFAUTS = {
     "fournisseur_stt": "groq",        # "groq" ou "local" (faster-whisper).
     "modele_stt_groq": "whisper-large-v3-turbo",
     "modele_stt_local": "base",
-    "langue": "en",  # Défaut « en » à moyen terme (décision 21 nov. 2026) : voix anglaise Piper plus naturelle ; français = UPMC quand on y revient.
+    # Langue : lue dans [general] langue (défaut « en » à moyen terme,
+    # décision 21 nov. 2026) ; voir config_jarvis.langue().
+    "langue": "en",
     "touche": "F9",
     "duree_max_enregistrement": 30.0,
     "duree_min_enregistrement": 0.3,
@@ -153,13 +156,9 @@ DEFAUTS = {
     "fournisseur_vision": "groq",
     "modele_vision_groq": "qwen/qwen3.8-27b",
     "modele_vision_anthropic": "claude-haiku-4-5-20251001",
-    "largeur_max_ecran": 1280,
-    "max_tokens_description": 300,
     # Navigateur (étape 5) : "systeme" (navigateur par défaut) ou
     # "playwright" (session interactive, avec repli sur "systeme").
     "navigateur_defaut": "systeme",
-    "delai_apres_navigation": 2,
-    "max_caracteres_page": 5000,
 }
 
 
@@ -170,64 +169,29 @@ DEFAUTS = {
 def charger_env(racine: Path) -> None:
     """Charge .env (à la racine ou dans config/) dans l'environnement.
 
-    Utilise python-dotenv si disponible, sinon un lecteur minimal (lignes
-    CLE=VALEUR). Ne pas échouer si le fichier est absent.
+    Délègue à config_jarvis.charger_env (lecteur unique, K1).
     """
-    for candidat in (racine / ".env", racine / "config" / ".env"):
-        if not candidat.exists():
-            continue
-        try:
-            from dotenv import load_dotenv
-
-            load_dotenv(candidat, override=False)
-            return
-        except ImportError:
-            pass
-        for ligne in candidat.read_text(encoding="utf-8").splitlines():
-            ligne = ligne.strip()
-            if not ligne or ligne.startswith("#") or "=" not in ligne:
-                continue
-            cle, valeur = ligne.split("=", 1)
-            os.environ.setdefault(
-                cle.strip(), valeur.strip().strip("\"'"))
-        return
+    config_jarvis.charger_env(racine)
 
 
 def charger_config(racine: Path) -> dict:
-    """Lit config.toml ([boucle], [yeux], [navigateur]), sinon
-    config.example.toml, sinon défauts.
+    """Lit la configuration à trois couches (config_jarvis : publique <
+    config.toml < config.local.toml) pour [boucle], [yeux], [navigateur],
+    [declenchement] et [general] (langue), sinon défauts.
 
-    Les variables d'environnement JARVIS_LLM et JARVIS_STT priment sur le
-    fichier. Les clés API ne sont jamais lues ici : elles vivent dans .env.
+    Les variables d'environnement JARVIS_LLM, JARVIS_STT et JARVIS_VISION
+    priment sur le fichier. Les clés API ne sont jamais lues ici : elles
+    vivent dans .env.
     """
     config = dict(DEFAUTS)
-    fichier = racine / "config" / "config.toml"
-    if not fichier.exists():
-        fichier = racine / "config" / "config.example.toml"
-        if fichier.exists():
-            print("Note : config.toml absent, on utilise config.example.toml "
-                  "(copiez-le vers config.toml pour personnaliser).")
-    if fichier.exists():
-        try:
-            import tomllib
-        except ImportError:
-            try:
-                import tomli as tomllib
-            except ImportError:
-                print("Avertissement : ni tomllib ni tomli disponible ; "
-                      "configuration par défaut.", file=sys.stderr)
-                tomllib = None
-        if tomllib is not None:
-            try:
-                donnees = tomllib.loads(fichier.read_text(encoding="utf-8"))
-                for section in ("boucle", "yeux", "navigateur"):
-                    valeurs = donnees.get(section, {})
-                    for cle in DEFAUTS:
-                        if cle in valeurs:
-                            config[cle] = valeurs[cle]
-            except (ValueError, OSError) as erreur:
-                print(f"Avertissement : config illisible ({erreur}) ; "
-                      "configuration par défaut.", file=sys.stderr)
+    donnees = config_jarvis.charger_donnees(racine / "config", avertir=True)
+    config_jarvis.reprendre(config, donnees,
+                            ("boucle", "yeux", "navigateur"))
+    config["langue"] = config_jarvis.langue(donnees)
+    touche = config_jarvis.section(donnees, "declenchement").get(
+        "touche_push_to_talk")
+    if touche and "touche" not in config_jarvis.section(donnees, "boucle"):
+        config["touche"] = str(touche)
     if os.environ.get("JARVIS_LLM"):
         config["fournisseur_llm"] = os.environ["JARVIS_LLM"].lower()
     if os.environ.get("JARVIS_STT"):
@@ -1425,10 +1389,18 @@ CONFIRMATIONS_COURTES_EN = {
 CONFIRMATIONS_COURTES = CONFIRMATIONS_COURTES | CONFIRMATIONS_COURTES_EN
 
 
+# Règle §3 : 8 mots au maximum. Le réglage peut seulement RESSERRER la règle
+# (1 à 8) ; une valeur plus grande est ramenée à 8.
+CONFIRMATION_MAX_MOTS = config_jarvis.nombre_borne(
+    config_jarvis.section(config_jarvis.charger_donnees(), "securite").get(
+        "confirmation_orale_max_mots", 8), 1, 8, 8, entier=True)
+
+
 def est_confirmation_courte(texte: str) -> bool:
     """Vérifie en code (pas par le modèle) une confirmation orale.
 
-    Règle §3 : courte (8 mots maximum), non qualifiée. « oui, mais en 4 »
+    Règle §3 : courte (8 mots maximum, réglage [securite]
+    confirmation_orale_max_mots, jamais au-delà de 8), non qualifiée. « oui, mais en 4 »
     ne compte pas ; toute négation ou réserve annule la confirmation.
 
     La ponctuation et les apostrophes typographiques que Whisper ajoute
@@ -1437,7 +1409,7 @@ def est_confirmation_courte(texte: str) -> bool:
     """
     t = texte.strip().lower().replace("\u2019", "'")
     t = " ".join(re.sub(r"[^\w\s'-]", " ", t).split())
-    if not t or len(t.split()) > 8:
+    if not t or len(t.split()) > CONFIRMATION_MAX_MOTS:
         return False
     if any(mot in t.split() for mot in
            ("non", "pas", "mais", "sauf", "attends", "stop",

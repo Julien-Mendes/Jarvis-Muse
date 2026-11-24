@@ -52,6 +52,13 @@ import re
 import sys
 from pathlib import Path
 
+# Modules voisins (config_jarvis.py…) importables même si ce fichier est
+# chargé par chemin (tests, importlib) et non lancé comme script.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import config_jarvis  # noqa: E402
+
 RACINE = Path(__file__).resolve().parent.parent
 
 # Valeurs par défaut (surchargées par config.toml [yeux] puis par .env).
@@ -61,8 +68,8 @@ DEFAUTS = {
     "modele_vision_anthropic": "claude-haiku-4-5-20251001",
     "largeur_max": 1280,
     "max_tokens_description": 300,
-    # Langue de la description (« fr » ou « en »). Reprise de [boucle]
-    # langue de config.toml ; surchargeable par --langue.
+    # Langue de la description (« fr » ou « en »). Reprise de [general]
+    # langue de la configuration ; surchargeable par --langue.
     "langue": "en",
 }
 
@@ -110,60 +117,21 @@ def construire_prompt(langue: str, question: str | None = None) -> str:
 def charger_env(racine: Path) -> None:
     """Charge .env (à la racine ou dans config/) dans l'environnement.
 
-    Même lecteur minimal que scripts/boucle_voix.py : python-dotenv si
-    disponible, sinon lignes CLE=VALEUR. Ne pas échouer si absent.
+    Délègue à config_jarvis.charger_env (lecteur unique, K1).
     """
-    for candidat in (racine / ".env", racine / "config" / ".env"):
-        if not candidat.exists():
-            continue
-        try:
-            from dotenv import load_dotenv
-
-            load_dotenv(candidat, override=False)
-            return
-        except ImportError:
-            pass
-        for ligne in candidat.read_text(encoding="utf-8").splitlines():
-            ligne = ligne.strip()
-            if not ligne or ligne.startswith("#") or "=" not in ligne:
-                continue
-            cle, valeur = ligne.split("=", 1)
-            os.environ.setdefault(
-                cle.strip(), valeur.strip().strip("\"'"))
-        return
+    config_jarvis.charger_env(racine)
 
 
 def charger_config(racine: Path) -> dict:
-    """Lit config.toml ([yeux]), sinon config.example.toml, sinon défauts.
+    """Lit [yeux] (config à trois couches : publique < config.toml <
+    config.local.toml) et la langue de [general], sinon défauts.
 
     La variable d'environnement JARVIS_VISION prime sur le fichier.
     """
     config = dict(DEFAUTS)
-    fichier = racine / "config" / "config.toml"
-    if not fichier.exists():
-        fichier = racine / "config" / "config.example.toml"
-    if fichier.exists():
-        try:
-            import tomllib
-        except ImportError:
-            try:
-                import tomli as tomllib
-            except ImportError:
-                tomllib = None
-        if tomllib is not None:
-            try:
-                donnees = tomllib.loads(fichier.read_text(encoding="utf-8"))
-                yeux = donnees.get("yeux", {})
-                for cle in DEFAUTS:
-                    if cle in yeux:
-                        config[cle] = yeux[cle]
-                # La langue vient de [boucle] (une seule langue active).
-                langue = str(donnees.get("boucle", {}).get("langue", ""))
-                if langue in LANGUES:
-                    config["langue"] = langue
-            except (ValueError, OSError) as erreur:
-                print(f"Avertissement : config illisible ({erreur}) ; "
-                      "configuration par défaut.", file=sys.stderr)
+    donnees = config_jarvis.charger_donnees(racine / "config")
+    config_jarvis.reprendre(config, donnees, ("yeux",))
+    config["langue"] = config_jarvis.langue(donnees)
     if os.environ.get("JARVIS_VISION"):
         config["fournisseur_vision"] = os.environ["JARVIS_VISION"].lower()
     return config
@@ -613,7 +581,7 @@ def main() -> int:
                            help="Question précise sur ce qui est à l'écran.")
     p_decrire.add_argument("--langue", choices=LANGUES, default=None,
                            help="Langue de la description (défaut : celle "
-                                "de config.toml, [boucle] langue).")
+                                "de la configuration, [general] langue).")
     p_decrire.add_argument("--sortie", type=Path, default=None,
                            help="Enregistrer aussi la capture (PNG).")
 

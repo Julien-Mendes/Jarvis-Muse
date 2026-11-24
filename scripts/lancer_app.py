@@ -48,17 +48,16 @@ RACINE = Path(__file__).resolve().parent.parent
 if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import config_jarvis  # noqa: E402
 from verrou import VerrouInstance  # noqa: E402
 
 PHRASES_PRET = {"fr": "Jarvis prêt.", "en": "Jarvis ready."}
 
 
 def langue_active() -> str:
-    """Langue active (« fr » ou « en ») : celle de config.toml, comme la boucle."""
+    """Langue active (« fr » ou « en ») : [general] langue, comme la boucle."""
     try:
-        from minuteur import langue_courante
-
-        langue = langue_courante()
+        langue = config_jarvis.langue()
     except Exception:
         return "en"
     return langue if langue in PHRASES_PRET else "en"

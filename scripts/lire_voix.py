@@ -23,11 +23,40 @@ import time
 import wave
 from pathlib import Path
 
+# Modules voisins (config_jarvis.py…) importables même si ce fichier est
+# chargé par chemin (tests, importlib) et non lancé comme script.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import config_jarvis  # noqa: E402
+
 # Voix par défaut par langue.
 VOIX_DEFAUT = {
     "fr": "fr_FR-upmc-medium",  # Piper, féminine (UPMC/LIMSI) — choisie le 21 nov. 2026.
     "en": "en_GB-alan-medium",   # Piper, masculine britannique.
 }
+# Noms courts de la configuration ([voix] voix_fr, voix_en) -> voix Piper.
+# Un nom complet (« en_GB-alan-medium ») est accepté tel quel.
+VOIX_COURTES = {
+    "upmc": "fr_FR-upmc-medium",
+    "alan": "en_GB-alan-medium",
+}
+
+
+def nom_voix_configure(donnees: dict, langue: str) -> str:
+    """Voix Piper de [voix] voix_<langue> (nom court ou complet), sinon la
+    voix par défaut de la langue."""
+    valeur = str(config_jarvis.section(donnees, "voix").get(
+        f"voix_{langue}", "")).strip()
+    if not valeur:
+        return VOIX_DEFAUT[langue]
+    if "-" in valeur or "_" in valeur:
+        return valeur
+    if valeur.lower() in VOIX_COURTES:
+        return VOIX_COURTES[valeur.lower()]
+    print(f"Avertissement : voix « {valeur} » inconnue dans [voix] "
+          f"voix_{langue} ; voix par défaut utilisée.", file=sys.stderr)
+    return VOIX_DEFAUT[langue]
 
 
 def trouver_modele(dossier_modeles: Path, nom_voix: str):
@@ -104,8 +133,9 @@ def main() -> int:
     groupe.add_argument("--texte", help="Texte à lire à voix haute.")
     groupe.add_argument("--fichier", help="Fichier texte (.txt) à lire à voix haute.")
     parser.add_argument(
-        "--langue", choices=["fr", "en"], default="en",
-        help="Langue du texte (défaut : en, décision 21 nov. 2026, moyen terme).",
+        "--langue", choices=["fr", "en"], default=None,
+        help="Langue du texte (défaut : celle de la configuration, "
+        "[general] langue ; en par défaut, décision 21 nov. 2026).",
     )
     parser.add_argument(
         "--voix", default=None,
@@ -113,8 +143,9 @@ def main() -> int:
         "en_GB-alan-medium en en).",
     )
     parser.add_argument(
-        "--vitesse", type=float, default=1.0,
-        help="Vitesse de lecture, 0.5 à 2.0 (défaut : 1.0).",
+        "--vitesse", type=float, default=None,
+        help="Vitesse de lecture, 0.5 à 2.0 (défaut : [voix] vitesse de la "
+        "configuration, 1.0 sinon).",
     )
     parser.add_argument(
         "--dossier-modeles", type=Path, default=None,
@@ -126,6 +157,18 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # Configuration (K1) : langue, voix, vitesse, moteur.
+    donnees = config_jarvis.charger_donnees()
+    voix_cfg = config_jarvis.section(donnees, "voix")
+    if str(voix_cfg.get("moteur", "piper")).strip().lower() != "piper":
+        print("Erreur : seul le moteur « piper » est pris en charge "
+              "([voix] moteur).", file=sys.stderr)
+        return 1
+    if args.langue is None:
+        args.langue = config_jarvis.langue(donnees)
+    if args.vitesse is None:
+        args.vitesse = config_jarvis.nombre_borne(
+            voix_cfg.get("vitesse", 1.0), 0.5, 2.0, 1.0)
     if not 0.5 <= args.vitesse <= 2.0:
         print("Erreur : --vitesse doit être entre 0.5 et 2.0.", file=sys.stderr)
         return 1
@@ -144,7 +187,7 @@ def main() -> int:
         return 1
 
     # Voix à utiliser.
-    nom_voix = args.voix or VOIX_DEFAUT[args.langue]
+    nom_voix = args.voix or nom_voix_configure(donnees, args.langue)
     racine = Path(__file__).resolve().parent.parent
     dossier_modeles = args.dossier_modeles or (racine / "models")
     chemin_modele, chemin_config = trouver_modele(dossier_modeles, nom_voix)

@@ -74,7 +74,8 @@ function Invoke-Voix {
 function Get-ConfigJarvis {
     <#
     .SYNOPSIS
-        Lit [session] et [quadrants] avec Python (tomllib), en JSON.
+        Lit [session], [quadrants] et la langue avec config_jarvis.py (config
+        publique < config.toml < config.local.toml), en JSON.
         Renvoie les valeurs par défaut si la lecture échoue.
     #>
     $defaut = [PSCustomObject]@{
@@ -85,29 +86,14 @@ function Get-ConfigJarvis {
         langue    = "en"
     }
     $code = @'
-import json, tomllib
-from pathlib import Path
-racine = Path(".")
-def lire(nom):
-    p = racine / "config" / nom
-    if not p.exists():
-        return {}
-    try:
-        return tomllib.loads(p.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-cfg = lire("config.example.toml")
-utilisateur = lire("config.toml")
-local = lire("config.local.toml")
-session = dict(cfg.get("session", {}))
-session.update(local.get("session", {}))
-def langue_de(d):
-    return d.get("boucle", {}).get("langue") or d.get("general", {}).get("langue")
-langue = langue_de(local) or langue_de(utilisateur) or langue_de(cfg) or "en"
-if langue not in ("fr", "en"):
-    langue = "en"
-print(json.dumps({"session": session,
-                  "quadrants": local.get("quadrants", {}),
+import json, sys
+sys.path.insert(0, "scripts")
+import config_jarvis
+donnees = config_jarvis.charger_donnees()
+session = dict(config_jarvis.section(donnees, "session"))
+quadrants = config_jarvis.section(donnees, "quadrants")
+langue = config_jarvis.langue(donnees)
+print(json.dumps({"session": session, "quadrants": quadrants,
                   "langue": langue}))
 '@
     try {

@@ -50,10 +50,23 @@ import webbrowser
 from pathlib import Path
 from urllib.parse import quote_plus, urlparse
 
-DELAI_APRES_NAVIGATION = 2.0
+# Modules voisins (config_jarvis.py…) importables même si ce fichier est
+# chargé par chemin (tests, importlib) et non lancé comme script.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import config_jarvis  # noqa: E402
+
+# [navigateur] delai_apres_navigation (0 à 30 s) et max_caracteres_page
+# (100 à 50000) de la configuration (K1).
+_CONFIG = config_jarvis.charger_donnees()
+_NAV = config_jarvis.section(_CONFIG, "navigateur")
+DELAI_APRES_NAVIGATION = config_jarvis.nombre_borne(
+    _NAV.get("delai_apres_navigation", 2.0), 0.0, 30.0, 2.0)
 DELAI_APRES_CLIC = 3.0
 TIMEOUT_NAVIGATION_MS = 15000
-MAX_CARACTERES_DEFAUT = 5000
+MAX_CARACTERES_DEFAUT = config_jarvis.nombre_borne(
+    _NAV.get("max_caracteres_page", 5000), 100, 50000, 5000, entier=True)
 
 SELECTEURS_TEXTE = ["main", "article", "[role='main']", ".content",
                     "#content", "body"]

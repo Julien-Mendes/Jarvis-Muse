@@ -41,13 +41,22 @@ from zoneinfo import ZoneInfo
 if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import config_jarvis
 from verrou import VerrouInstance, verrou_fichier
 
-# Fuseau horaire de Julien (config/config.example.toml).
-FUSEAU = ZoneInfo("America/Toronto")
+# Réglages lus une fois à l'import (K1) : fuseau et limites du minuteur.
+_CONFIG = config_jarvis.charger_donnees()
+FUSEAU = config_jarvis.fuseau(_CONFIG)
 
-MAX_ACTIFS = 20
-DUREE_MAX_MINUTES = 7 * 24 * 60  # 1 semaine.
+# [minuteur] max_actifs (1 à 100) et duree_max (« 7j », « 12h », « 90m ») ;
+# défauts : 20 minuteurs, 1 semaine. Le fichier (data/timers.json) n'est pas
+# réglable : l'application, le HUD et le lanceur le lisent à cet endroit.
+MAX_ACTIFS = config_jarvis.nombre_borne(
+    config_jarvis.section(_CONFIG, "minuteur").get("max_actifs", 20),
+    1, 100, 20, entier=True)
+DUREE_MAX_MINUTES = config_jarvis.duree_en_minutes(
+    config_jarvis.section(_CONFIG, "minuteur").get("duree_max", "7j"),
+    7 * 24 * 60)
 AVANCE_MAX = timedelta(days=365)  # 1 an.
 LONGUEUR_MAX_ETIQUETTE = 80
 
@@ -74,28 +83,12 @@ def maintenant() -> datetime:
 def langue_courante(dossier_config: Path | None = None) -> str:
     """Langue des annonces : « fr » ou « en ».
 
-    Celle de config.toml ([boucle] langue), sinon de config.example.toml,
-    comme boucle_voix.py ; « en » si rien n'est lisible. Relue à chaque
-    annonce : changer la langue n'exige pas de redémarrer `surveiller`.
+    Celle de la configuration ([general] langue ; config.toml puis
+    config.local.toml par-dessus config.example.toml), comme boucle_voix.py ;
+    « en » si rien n'est lisible. Relue à chaque annonce : changer la langue
+    n'exige pas de redémarrer `surveiller`.
     """
-    dossier = dossier_config or (Path(__file__).resolve().parent.parent
-                                 / "config")
-    for nom in ("config.toml", "config.example.toml"):
-        chemin = dossier / nom
-        if not chemin.exists():
-            continue
-        try:
-            try:
-                import tomllib
-            except ModuleNotFoundError:
-                import tomli as tomllib
-            with chemin.open("rb") as fichier:
-                langue = str(tomllib.load(fichier).get("boucle", {})
-                             .get("langue", "en"))
-        except (OSError, ValueError, ImportError):
-            return "en"
-        return langue if langue in ("fr", "en") else "en"
-    return "en"
+    return config_jarvis.langue(config_jarvis.charger_donnees(dossier_config))
 
 
 def chemin_donnees_defaut() -> Path:

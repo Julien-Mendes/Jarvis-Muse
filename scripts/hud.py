@@ -36,8 +36,15 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-# Fuseau horaire de Julien (config/config.example.toml).
-FUSEAU = ZoneInfo("America/Toronto")
+# Modules voisins (config_jarvis.py…) importables même si ce fichier est
+# chargé par chemin (tests, importlib) et non lancé comme script.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import config_jarvis  # noqa: E402
+
+# Fuseau horaire : [general] fuseau_horaire de la configuration (K1).
+FUSEAU = config_jarvis.fuseau()
 
 RACINE = Path(__file__).resolve().parent.parent
 FICHIER_ETAT = RACINE / "data" / "hud-state.json"

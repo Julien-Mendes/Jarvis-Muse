@@ -4,12 +4,17 @@
 # Les valeurs privées vont dans config.local.toml, les secrets dans .env.
 
 [general]
-# Langues : "en" par défaut à moyen terme (décision 21 nov. 2026) — les voix
-# françaises Piper écoutées (Gilles, Tom) sonnaient trop robotiques ; le
-# français passe par la voix UPMC quand on y revient. Bascule automatique
-# selon la langue parlée : pas encore implémentée, une langue à la fois.
+# Langue active : UNE seule clé pour tous les scripts (boucle, application,
+# minuteurs, vision, voix, lanceurs). "en" par défaut à moyen terme
+# (décision 21 nov. 2026) — les voix françaises Piper écoutées (Gilles, Tom)
+# sonnaient trop robotiques ; le français passe par la voix UPMC quand on y
+# revient. Bascule automatique selon la langue parlée : pas encore
+# implémentée, une langue à la fois. (Ancien emplacement [boucle] langue :
+# encore respecté s'il reste dans votre config.toml, mais à supprimer.)
 langue = "en"
+# Langues acceptées pour la clé ci-dessus ("fr" et "en" seulement).
 langues_disponibles = ["fr", "en"]
+# Fuseau horaire (nom IANA) : horodatages, minuteurs, rappels à heure fixe.
 fuseau_horaire = "America/Toronto"
 
 [voix]
@@ -19,19 +24,19 @@ fuseau_horaire = "America/Toronto"
 #   python -m piper.download_voices fr_FR-upmc-medium --data-dir models
 # Anglais (défaut à moyen terme) : Piper "alan" (masculine britannique),
 # voix "en_GB-alan-medium". Kokoro reste une option ultérieure pour l'anglais.
+# Seul moteur pris en charge pour l'instant : "piper".
 moteur = "piper"
+# Noms courts ("upmc", "alan") ou noms complets Piper ("fr_FR-upmc-medium").
 voix_fr = "upmc"
 voix_en = "alan"
+# Vitesse de lecture : 0.5 à 2.0 (1.0 = normale).
 vitesse = 1.0
-# Effet "voice in the walls" (optionnel)
-effet_murs = false
 
 [declenchement]
 # Déclencheur actuel : push-to-talk F9 (validé le 21 nov. 2026, étape 4).
 # Mot de réveil et double-clap : décisions "plus tard" (21 nov. 2026).
 # Maintenir F9 pour parler, relâcher pour envoyer ; F9 pendant la réponse
-# l'interrompt.
-mode = "push_to_talk"
+# l'interrompt. Seule la touche F9 est prise en charge pour l'instant.
 touche_push_to_talk = "F9"
 
 [boucle]
@@ -53,17 +58,18 @@ effort_anthropic = "low"
 fournisseur_stt = "groq"
 modele_stt_groq = "whisper-large-v3-turbo"
 modele_stt_local = "base"
-langue = "en"  # Défaut « en » à moyen terme (décision 21 nov. 2026).
+# (La langue se règle dans [general] langue, pas ici.)
 duree_max_enregistrement = 30.0
 duree_min_enregistrement = 0.3
 max_tours_outils = 3
 max_tokens_reponse = 400
 
 [minuteur]
-# Minuteur persistant local (décision OUI, 21 nov. 2026)
-max_actifs = 20
-duree_max = "7j"
-fichier = "data/timers.json"
+# Minuteur persistant local (décision OUI, 21 nov. 2026). Les minuteurs sont
+# dans data/timers.json (emplacement fixe : l'application, le HUD et le
+# lanceur y lisent aussi).
+max_actifs = 20     # 1 à 100
+duree_max = "7j"    # durée maximale d'un compte à rebours : "7j", "12h", "90m"
 
 [yeux]
 # Vision d'écran ciblée (étape 5) — scripts/yeux.py.
@@ -87,14 +93,20 @@ max_tokens_description = 300
 # Lecture seule par défaut : navigation, recherche, clics sur liens/boutons
 # hors formulaire, lecture de texte, capture de page. Aucune soumission de
 # formulaire, aucune connexion, aucun achat (hold_writes).
-navigateur_defaut = "systeme"  # "systeme" (navigateur par défaut) ou "playwright"
-delai_apres_navigation = 2
-max_caracteres_page = 5000
+# "systeme" : « ouvre [site] » ouvre ton vrai navigateur par défaut (tes
+# connexions, tes profils) ; Playwright sert aux recherches seulement.
+# "playwright" : tout passe par le Chromium de Playwright.
+navigateur_defaut = "systeme"
+delai_apres_navigation = 2    # secondes d'attente après une navigation (0 à 30)
+max_caracteres_page = 5000    # texte de page lu au maximum (100 à 50000)
 
 [securite]
-# Ne jamais changer sans relire docs/regles-securite.md
-hote_serveur = "127.0.0.1"
-blocage_ecritures_apres_lecture_externe = true
+# Ne jamais changer sans relire docs/regles-securite.md. Le blocage des
+# écritures après lecture externe (hold_writes) et le serveur local sur
+# 127.0.0.1 seulement sont des règles du code, pas des réglages : aucune clé
+# ici ne peut les désactiver.
+# Longueur maximale d'un « oui » valable : 1 à 8 mots (jamais plus de 8 ;
+# le réglage ne peut que resserrer la règle).
 confirmation_orale_max_mots = 8
 
 [hud]
