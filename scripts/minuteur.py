@@ -41,7 +41,7 @@ from zoneinfo import ZoneInfo
 if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from verrou import VerrouInstance
+from verrou import VerrouInstance, verrou_fichier
 
 # Fuseau horaire de Julien (config/config.example.toml).
 FUSEAU = ZoneInfo("America/Toronto")
@@ -58,6 +58,12 @@ JOURS_EN = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
             "Saturday", "Sunday"]
 MOIS_EN = ["January", "February", "March", "April", "May", "June", "July",
            "August", "September", "October", "November", "December"]
+
+
+# Intervalle de vérification du surveillant (secondes) : un minuteur de
+# quelques secondes réglé pendant que le surveillant dort sonne au pire
+# 5 s en retard (avant : 30 s).
+INTERVALLE_VERIFICATION_S = 5.0
 
 
 def maintenant() -> datetime:
@@ -119,7 +125,16 @@ def sauvegarder(chemin: Path, etat: dict) -> None:
     temporaire = chemin.with_suffix(".tmp")
     temporaire.write_text(json.dumps(etat, ensure_ascii=False, indent=1),
                           encoding="utf-8")
-    temporaire.replace(chemin)
+    # Windows refuse parfois le remplacement quand un autre processus lit le
+    # fichier à cet instant (l'application, par exemple) : quelques reprises.
+    for essai in range(5):
+        try:
+            temporaire.replace(chemin)
+            return
+        except PermissionError:
+            if essai == 4:
+                raise
+            time.sleep(0.05)
 
 
 # ---------------------------------------------------------------------------
@@ -278,18 +293,21 @@ def declencher_dus(chemin: Path, debut_surveillance=None,
     pendant que la machine était éteinte.
     """
     ref = maintenant()
-    etat = charger(chemin)
-    minuteurs = etat["timers"]
-    dus = sorted(
-        (m for m in minuteurs
-         if datetime.fromisoformat(m["due"]) <= ref),
-        key=lambda m: m["due"],
-    )
-    if not dus:
-        return []
+    # Lire, retirer les échus et réécrire sous verrou (M3) ; les annonces,
+    # longues, se font hors verrou.
+    with verrou_fichier(chemin):
+        etat = charger(chemin)
+        minuteurs = etat["timers"]
+        dus = sorted(
+            (m for m in minuteurs
+             if datetime.fromisoformat(m["due"]) <= ref),
+            key=lambda m: m["due"],
+        )
+        if not dus:
+            return []
+        etat["timers"] = [m for m in minuteurs if m not in dus]
+        sauvegarder(chemin, etat)
     langue = langue or langue_courante()
-    etat["timers"] = [m for m in minuteurs if m not in dus]
-    sauvegarder(chemin, etat)
 
     messages = []
     for minuteur in dus:
@@ -354,17 +372,18 @@ def cmd_demarrer(args) -> int:
         print("Erreur : c'est à plus d'un an ; trop loin.", file=sys.stderr)
         return 1
 
-    etat = charger(args.donnees)
-    if len(etat["timers"]) >= MAX_ACTIFS:
-        print(f"Erreur : il y a déjà {MAX_ACTIFS} minuteurs actifs ; "
-              "annulez-en d'abord.", file=sys.stderr)
-        return 1
-    minuteur = {"id": etat["next_id"], "kind": genre, "label": etiquette,
-                "due": due.isoformat(), "minutes": minutes,
-                "created": ref.isoformat()}
-    etat["next_id"] += 1
-    etat["timers"].append(minuteur)
-    sauvegarder(args.donnees, etat)
+    with verrou_fichier(args.donnees):  # M3 : lire-modifier-écrire d'un bloc.
+        etat = charger(args.donnees)
+        if len(etat["timers"]) >= MAX_ACTIFS:
+            print(f"Erreur : il y a déjà {MAX_ACTIFS} minuteurs actifs ; "
+                  "annulez-en d'abord.", file=sys.stderr)
+            return 1
+        minuteur = {"id": etat["next_id"], "kind": genre,
+                    "label": etiquette, "due": due.isoformat(),
+                    "minutes": minutes, "created": ref.isoformat()}
+        etat["next_id"] += 1
+        etat["timers"].append(minuteur)
+        sauvegarder(args.donnees, etat)
 
     quoi = (f"Minuteur de {formater_duree(minutes)}" if genre == "timer"
             else "Rappel")
@@ -406,35 +425,36 @@ def cmd_lister(args) -> int:
 
 
 def cmd_annuler(args) -> int:
-    etat = charger(args.donnees)
-    minuteurs = etat["timers"]
-    cible = args.cible.strip()
+    with verrou_fichier(args.donnees):  # M3 : lire-modifier-écrire d'un bloc.
+        etat = charger(args.donnees)
+        minuteurs = etat["timers"]
+        cible = args.cible.strip()
 
-    if cible.lower() in ("tout", "tous", "all", "everything"):
-        supprimes = list(minuteurs)
-    elif cible.isdigit():
-        supprimes = [m for m in minuteurs if m["id"] == int(cible)]
-    else:
-        recherche = cible.lower()
-        supprimes = [m for m in minuteurs
-                     if recherche and recherche in m["label"].lower()]
-        if len(supprimes) > 1:
+        if cible.lower() in ("tout", "tous", "all", "everything"):
+            supprimes = list(minuteurs)
+        elif cible.isdigit():
+            supprimes = [m for m in minuteurs if m["id"] == int(cible)]
+        else:
+            recherche = cible.lower()
+            supprimes = [m for m in minuteurs
+                         if recherche and recherche in m["label"].lower()]
+            if len(supprimes) > 1:
+                noms = ", ".join(
+                    f"n° {m['id']} « {m['label']} »" for m in supprimes)
+                print(f"Erreur : plusieurs minuteurs correspondent : {noms}. "
+                      "Précisez le numéro.", file=sys.stderr)
+                return 1
+
+        if not supprimes:
             noms = ", ".join(
-                f"n° {m['id']} « {m['label']} »" for m in supprimes)
-            print(f"Erreur : plusieurs minuteurs correspondent : {noms}. "
-                  "Précisez le numéro.", file=sys.stderr)
+                f"n° {m['id']} « {m['label'] or m['kind']} »" for m in minuteurs) \
+                or "aucun"
+            print(f"Erreur : aucun minuteur ne correspond à « {cible} » ; "
+                  f"en cours : {noms}.", file=sys.stderr)
             return 1
 
-    if not supprimes:
-        noms = ", ".join(
-            f"n° {m['id']} « {m['label'] or m['kind']} »" for m in minuteurs) \
-            or "aucun"
-        print(f"Erreur : aucun minuteur ne correspond à « {cible} » ; "
-              f"en cours : {noms}.", file=sys.stderr)
-        return 1
-
-    etat["timers"] = [m for m in minuteurs if m not in supprimes]
-    sauvegarder(args.donnees, etat)
+        etat["timers"] = [m for m in minuteurs if m not in supprimes]
+        sauvegarder(args.donnees, etat)
     noms = ", ".join(
         f"n° {m['id']} « {m['label'] or m['kind']} »" for m in supprimes)
     print(f"Annulé : {noms}.")
@@ -459,7 +479,8 @@ def cmd_surveiller(args) -> int:
         return 0
     debut = maintenant()
     print("Surveillance des minuteurs démarrée "
-          "(vérification toutes les 30 secondes au plus).", flush=True)
+          f"(vérification toutes les {INTERVALLE_VERIFICATION_S:g} secondes "
+          "au plus).", flush=True)
     print("Arrêter avec Ctrl+C.", flush=True)
     declencher_dus(args.donnees, debut_surveillance=debut, langue=args.langue)
     try:
@@ -470,9 +491,10 @@ def cmd_surveiller(args) -> int:
             if prochaines:
                 attente = max(
                     0.0,
-                    min(30.0, (min(prochaines) - maintenant()).total_seconds()))
+                    min(INTERVALLE_VERIFICATION_S,
+                        (min(prochaines) - maintenant()).total_seconds()))
             else:
-                attente = 30.0
+                attente = INTERVALLE_VERIFICATION_S
             time.sleep(attente)
             declencher_dus(args.donnees, langue=args.langue)
     except KeyboardInterrupt:

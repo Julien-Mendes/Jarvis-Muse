@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """verrou.py — Verrous de fichier du Jarvis-Muse (bibliothèque, pas un script).
 
-Deux usages, tous deux sans port réseau et sans dépendance :
+Trois usages, tous sans port réseau et sans dépendance :
 
   - VerrouInstance : « une seule instance ». Un second lancement de la
     boucle vocale, du surveillant de minuteurs ou du lanceur trouve le verrou
     pris et refuse de démarrer (S1). Le verrou est lié au processus : Windows
     le libère tout seul quand le processus se termine, même sur un plantage,
     donc il n'y a jamais de « verrou périmé » à effacer à la main.
+
+  - verrou_fichier : verrou court autour d'un « lire, modifier, écrire »
+    d'un fichier partagé entre processus (data/timers.json, écrit par la
+    boucle, le surveillant et la ligne de commande). Sans lui, deux
+    processus qui écrivent en même temps peuvent perdre un minuteur (M3).
 
 Les verrous sont des verrous d'octet du système (msvcrt.locking sous Windows,
 fcntl.flock ailleurs) posés sur un petit fichier .lock du dossier data/.
@@ -17,8 +22,10 @@ non accessible en écriture, par exemple), on ne bloque pas Jarvis — on
 laisse démarrer plutôt que de refuser à tort.
 """
 
+import contextlib
 import os
 import sys
+import time
 from pathlib import Path
 
 RACINE = Path(__file__).resolve().parent.parent
@@ -110,3 +117,51 @@ class VerrouInstance:
         except OSError:
             pass
         self._fichier = None
+
+
+@contextlib.contextmanager
+def verrou_fichier(chemin: Path, delai: float = 5.0, pas: float = 0.05):
+    """Verrou exclusif court autour de la modification d'un fichier partagé.
+
+    Usage :
+        with verrou_fichier(chemin):
+            etat = charger(chemin)   # lire
+            ...                      # modifier
+            sauvegarder(chemin, etat)  # écrire
+
+    Le verrou est posé sur `<fichier>.lock` (le fichier lui-même est
+    remplacé à chaque écriture, il ne peut donc pas servir de support).
+    On attend au plus `delai` secondes ; passé ce délai, ou si le fichier
+    de verrou est impossible à créer, on continue SANS verrou plutôt que de
+    figer Jarvis (avertissement sur la sortie d'erreur). Valeur produite :
+    True si le verrou est tenu, False sinon.
+    """
+    chemin = Path(chemin)
+    verrou = chemin.with_name(chemin.name + ".lock")
+    try:
+        verrou.parent.mkdir(parents=True, exist_ok=True)
+        fichier = open(verrou, "a+b")
+    except OSError:
+        yield False
+        return
+    pris = False
+    fin = time.monotonic() + delai
+    try:
+        while True:
+            if _verrouiller(fichier):
+                pris = True
+                break
+            if time.monotonic() >= fin:
+                print(f"Avertissement : verrou de {chemin.name} non obtenu "
+                      f"après {delai:g} s ; on continue sans verrou.",
+                      file=sys.stderr)
+                break
+            time.sleep(pas)
+        yield pris
+    finally:
+        if pris:
+            _deverrouiller(fichier)
+        try:
+            fichier.close()
+        except OSError:
+            pass
