@@ -266,10 +266,11 @@ def charger_config_app(racine: Path) -> dict:
                 for cle in DEFAUTS:
                     if cle in app:
                         config[cle] = app[cle]
-                # Langue de l'interface = langue de la boucle vocale.
-                boucle = donnees.get("boucle", {})
-                langue = (str(boucle.get("langue", ""))
-                          if isinstance(boucle, dict) else "")
+                # Langue de l'interface = langue de la boucle vocale : même
+                # lecture que partout (config_jarvis, K1 : [general] langue ;
+                # l'ancien [boucle] langue reste respecté).
+                langue = config_jarvis.langue(
+                    config_jarvis.charger_donnees(racine / "config"))
                 if langue in LANGUES:
                     config["langue"] = langue
             except (ValueError, OSError):
