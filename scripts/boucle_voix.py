@@ -148,6 +148,10 @@ DEFAUTS = {
     "duree_min_enregistrement": 0.3,
     "max_tours_outils": 3,
     "max_tokens_reponse": 400,
+    # Délai maximal d'UN appel au cerveau (secondes, 1 à 120). Passé ce délai,
+    # l'appel est abandonné et Jarvis le dit (B1) : avant, le délai par défaut
+    # du SDK Anthropic (10 minutes) pouvait figer la boucle.
+    "delai_cerveau_s": 20.0,
     # Yeux (étape 5) : vision par défaut "groq" (qwen3.8-27b, multimodal —
     # un seul service Groq pour cerveau + STT + vision, décision de Julien
     # le 21 nov. 2026). "anthropic" (Haiku, vision confirmée) en repli.
@@ -848,14 +852,62 @@ def outils_pour(fournisseur: str, langue: str) -> list:
     return [_outil_en(base, nom, forme) for nom, base in bases.items()]
 
 
+# Appels au cerveau (B1) : délai explicite par tentative et une seule reprise
+# du SDK. Le repli automatique vers un autre fournisseur et le plafond de
+# dépense ne font PAS partie de ce lot (décision de Julien en attente).
+DELAI_CERVEAU_DEFAUT_S = 20.0
+NOMBRE_REPRISES_CERVEAU = 1
+
+# Noms de classes d'erreurs de délai des SDK (groq, anthropic, httpx) : une
+# erreur de délai n'a pas de code d'état HTTP, on la reconnaît à son type.
+NOMS_ERREURS_DELAI = {"APITimeoutError", "Timeout", "TimeoutException",
+                      "ReadTimeout", "ConnectTimeout", "WriteTimeout",
+                      "PoolTimeout"}
+
+
+def classer_erreur_cerveau(erreur: BaseException) -> str:
+    """Catégorie d'une erreur d'appel au cerveau, SANS lire son message.
+
+    Retourne « limite » (429), « delai » (dépassement de délai), « cle »
+    (401/403 : clé refusée), « modele » (404 : modèle retiré ou inconnu) ou
+    « injoignable » (tout le reste : réseau, 5xx, erreur inattendue).
+
+    Avant le lot 0.1, la limite de débit était reconnue en cherchant « 429 »
+    ou « rate » dans le texte de l'erreur : un message contenant « generate »
+    ou « iterate » passait pour une limite de débit.
+    """
+    statut = getattr(erreur, "status_code", None)
+    if statut is None:
+        statut = getattr(getattr(erreur, "response", None), "status_code",
+                         None)
+    if isinstance(statut, int):
+        if statut == 429:
+            return "limite"
+        if statut in (401, 403):
+            return "cle"
+        if statut == 404:
+            return "modele"
+        if statut in (408, 504):
+            return "delai"
+        return "injoignable"
+    if isinstance(erreur, TimeoutError) or any(
+            classe.__name__ in NOMS_ERREURS_DELAI
+            for classe in type(erreur).__mro__):
+        return "delai"
+    return "injoignable"
+
+
 class CerveauGroq:
     """Cerveau par défaut : Groq, gpt-oss-120b (palier gratuit, sans carte)."""
 
     def __init__(self, cle_api: str, modele: str, max_tokens: int,
-                 effort: str = ""):
+                 effort: str = "", delai: float = DELAI_CERVEAU_DEFAUT_S):
         from groq import Groq
 
-        self.client = Groq(api_key=cle_api)
+        # Délai explicite par tentative ; une seule reprise automatique du
+        # SDK (défaut : 2) pour borner l'attente : au pire environ 2 x delai.
+        self.client = Groq(api_key=cle_api, timeout=delai,
+                           max_retries=NOMBRE_REPRISES_CERVEAU)
         self.modele = modele
         self.max_tokens = max_tokens
         self.effort = effort
@@ -910,10 +962,11 @@ class CerveauAnthropic:
     """Alternative configurable : Claude Haiku par API (payant à l'usage)."""
 
     def __init__(self, cle_api: str, modele: str, max_tokens: int,
-                 effort: str = ""):
+                 effort: str = "", delai: float = DELAI_CERVEAU_DEFAUT_S):
         from anthropic import Anthropic
 
-        self.client = Anthropic(api_key=cle_api)
+        self.client = Anthropic(api_key=cle_api, timeout=delai,
+                                max_retries=NOMBRE_REPRISES_CERVEAU)
         self.modele = modele
         self.max_tokens = max_tokens
         self.effort = effort
@@ -963,6 +1016,13 @@ class CerveauAnthropic:
         return {"role": "assistant", "content": reponse["_contenu_brut"]}
 
 
+def delai_cerveau(config: dict) -> float:
+    """Délai d'un appel au cerveau, en secondes (1 à 120 ; 20 par défaut)."""
+    return config_jarvis.nombre_borne(
+        config.get("delai_cerveau_s", DELAI_CERVEAU_DEFAUT_S), 1.0, 120.0,
+        DELAI_CERVEAU_DEFAUT_S)
+
+
 def creer_cerveau(config: dict):
     """Fabrique le cerveau choisi dans la configuration.
 
@@ -984,7 +1044,8 @@ def creer_cerveau(config: dict):
             return CerveauAnthropic(
                 cle, config["modele_anthropic"],
                 config["max_tokens_reponse"],
-                str(config.get("effort_anthropic", "") or ""))
+                str(config.get("effort_anthropic", "") or ""),
+                delai_cerveau(config))
         except ImportError:
             print("Erreur : le module anthropic n'est pas installé.",
                   file=sys.stderr)
@@ -1006,7 +1067,8 @@ def creer_cerveau(config: dict):
     try:
         return CerveauGroq(cle, config["modele_groq"],
                            config["max_tokens_reponse"],
-                           str(config.get("effort_groq", "") or ""))
+                           str(config.get("effort_groq", "") or ""),
+                           delai_cerveau(config))
     except ImportError:
         print("Erreur : le module groq n'est pas installé.", file=sys.stderr)
         print("Installez-le avec :", file=sys.stderr)
@@ -1053,6 +1115,13 @@ MESSAGES = {
                    "secondes."),
         "cerveau_injoignable": ("Désolé Julien, je n'ai pas pu joindre le "
                                 "cerveau pour l'instant."),
+        "cerveau_lent": ("Désolé Julien, le cerveau met trop de temps à "
+                         "répondre. Réessaie dans un instant."),
+        "cerveau_cle": ("Mon accès au cerveau est refusé, Julien — vérifie "
+                        "la clé dans le fichier .env."),
+        "cerveau_modele": ("Le modèle du cerveau n'est plus disponible, "
+                           "Julien — il faut en choisir un autre dans la "
+                           "configuration."),
         "outil_minuteur_manque": "Il me manque la durée ou l'heure du minuteur.",
         "outil_ecran_confirmation": (
             "CONFIRMATION REQUISE : ne décris rien pour "
@@ -1092,6 +1161,13 @@ MESSAGES = {
                    "is making me wait. Try again in a few seconds."),
         "cerveau_injoignable": ("Sorry Julien, I couldn't reach my brain "
                                 "just now."),
+        "cerveau_lent": ("Sorry Julien, my brain is taking too long to "
+                         "answer. Try again in a moment."),
+        "cerveau_cle": ("My access to the brain was refused, Julien — "
+                        "please check the key in the .env file."),
+        "cerveau_modele": ("The brain's model is no longer available, "
+                           "Julien — another one has to be chosen in the "
+                           "configuration."),
         "outil_minuteur_manque": "The timer's duration or time is missing.",
         "outil_ecran_confirmation": (
             "CONFIRMATION REQUIRED: do not describe anything yet. "
@@ -1866,9 +1942,13 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
         print(f"Erreur du cerveau : {message}", file=sys.stderr)
         if mesures is not None:
             mesures["erreur"] = (message or "erreur inconnue")[:120]
-        if "429" in message or "rate" in message.lower():
-            return msg(langue, "limite")
-        return msg(langue, "cerveau_injoignable")
+        # B1 : la catégorie vient du code d'état HTTP ou du type de l'erreur,
+        # jamais du texte du message (« generate » contient « rate »).
+        categorie = classer_erreur_cerveau(erreur)
+        cle_message = {"limite": "limite", "delai": "cerveau_lent",
+                       "cle": "cerveau_cle", "modele": "cerveau_modele",
+                       }.get(categorie, "cerveau_injoignable")
+        return msg(langue, cle_message)
 
 
 # ---------------------------------------------------------------------------

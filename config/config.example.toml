@@ -63,6 +63,10 @@ duree_max_enregistrement = 30.0
 duree_min_enregistrement = 0.3
 max_tours_outils = 3
 max_tokens_reponse = 400
+# Délai maximal d'UN appel au cerveau, en secondes (1 à 120). Passé ce délai,
+# Jarvis abandonne l'appel et le dit. Une seule reprise automatique est
+# faite avant d'abandonner : l'attente maximale est d'environ 2 fois ce délai.
+delai_cerveau_s = 20
 
 [minuteur]
 # Minuteur persistant local (décision OUI, 21 nov. 2026). Les minuteurs sont
