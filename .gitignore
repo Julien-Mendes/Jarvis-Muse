@@ -19,3 +19,8 @@ logs/
 __pycache__/
 *.pyc
 .venv/
+
+# Données privées : jamais versionnées (S5, lot 0.1)
+config/config.toml
+a-dire/
+vers-carson/
