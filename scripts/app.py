@@ -300,6 +300,8 @@ LARGEUR_BOUTON_COLONNE = 150      # Interrompre et Envoyer : même colonne
 HAUTEUR_SAISIE = 42               # champ texte et Envoyer
 DELAI_REFLUX_MS = 120             # retour à la ligne des bulles (anti-rebond)
 DELAI_GEOMETRIE_MS = 800          # mémorisation de la géométrie (anti-rebond)
+DELAI_VERIF_DEFILEMENT_MS = 100   # second contrôle du bas après la mise en page
+TOLERANCE_BAS = 0.002             # « en bas » : fin de la vue >= 1 - tolérance
 PAS_ANIMATION_MS = 90             # orbe qui pulse
 PAS_REPOS_MS = 200                # orbe au repos : surveillance, aucun dessin
 LARGEUR_FENETRE_MIN = 640
@@ -777,6 +779,13 @@ def _assombrir(couleur_hex: str, facteur: float) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
+def est_en_bas(debut: float, fin: float,
+               tolerance: float = TOLERANCE_BAS) -> bool:
+    """Vrai si la vue défilante est en bas (ou si tout le contenu tient dans
+    la fenêtre) : `debut` et `fin` sont les fractions visibles de yview()."""
+    return fin >= 1.0 - tolerance
+
+
 def _fond_de_fenetre(fenetre) -> None:
     """Applique le fond du thème à une fenêtre (racine ou Historique). Sans
     effet pour jarvis_bleu (fond d'origine de CustomTkinter) ; jamais
@@ -892,6 +901,13 @@ class Application:
         self._message_vide = None
         self._fenetre_historique = None
         self._historique: dict | None = None
+        # Défilement de la conversation (U2) : suivre les nouveaux messages
+        # seulement si l'utilisateur était en bas.
+        self._apres_defilement = None
+        self._verif_defilement = None
+        self._defilement_bas_voulu = False
+        self._defilement_fraction: float | None = None
+        self._dernier_bas = True
 
         # -- Menu ------------------------------------------------------
         self._barre_menu = tk.Menu(self.fenetre)
@@ -974,8 +990,12 @@ class Application:
             pass
         self.zone_conversation.grid(row=0, column=0, sticky="nsew",
                                     padx=(8, 0), pady=8)
+        # add="+" : CTkScrollableFrame met à jour sa zone de défilement
+        # (scrollregion) dans sa propre liaison <Configure> ; sans add="+",
+        # ce bind la REMPLACE et la barre de défilement ne suit plus le
+        # contenu (bug constaté à l'essai : bloqué sur les premiers échanges).
         self.zone_conversation.bind(
-            "<Configure>", self._sur_redimensionnement)
+            "<Configure>", self._sur_redimensionnement, add="+")
 
         self.panneau_minuteurs = ctk.CTkFrame(
             self.centre, fg_color=COULEUR_PANNEAU, corner_radius=12)
@@ -1146,17 +1166,115 @@ class Application:
             largeur = 600
         return max(240, largeur - RESERVE_LARGEUR_BULLE)
 
-    def _defiler_bas(self) -> None:
-        """Défile la conversation tout en bas (au mieux : l'API interne
-        de CTkScrollableFrame peut changer d'une version à l'autre)."""
+    # -- Défilement de la conversation (au mieux : l'API interne de
+    # CTkScrollableFrame, `_parent_canvas`, peut changer d'une version à l'autre)
+
+    def _canvas_conversation(self):
+        return getattr(self.zone_conversation, "_parent_canvas", None)
+
+    def _vue_conversation(self) -> tuple:
+        """(début, fin) : fractions visibles de la conversation ; (0, 1) si
+        illisible (tout est considéré visible)."""
         try:
-            self.zone_conversation._parent_canvas.yview_moveto(1.0)
+            debut, fin = self._canvas_conversation().yview()
+            return float(debut), float(fin)
+        except Exception:
+            return 0.0, 1.0
+
+    def _est_en_bas(self) -> bool:
+        return est_en_bas(*self._vue_conversation())
+
+    def _position_avant_changement(self) -> bool:
+        """Vrai si la vue est en bas. À lire AVANT de modifier la
+        conversation. Pendant un redimensionnement ou un défilement en
+        attente, la vue n'est pas fiable : on garde la dernière valeur."""
+        if (self._apres_redimensionnement is not None
+                or self._apres_defilement is not None):
+            return self._dernier_bas
+        self._dernier_bas = self._est_en_bas()
+        return self._dernier_bas
+
+    def _maj_zone_defilement(self) -> None:
+        """Remet la zone de défilement (scrollregion) à la taille réelle du
+        contenu, sans dépendre de la liaison interne de CTkScrollableFrame."""
+        canvas = self._canvas_conversation()
+        try:
+            canvas.configure(scrollregion=canvas.bbox("all"))
         except Exception:
             pass
 
+    def _planifier_defilement(self, bas: bool,
+                              fraction: float | None = None) -> None:
+        """Programme, APRÈS la mise en page de Tk, la mise à jour de la zone
+        de défilement puis : le bas (`bas`), ou la position `fraction`, ou
+        rien (l'utilisateur lit plus haut : on ne le fait pas redescendre).
+        Plusieurs demandes dans le même passage n'en font qu'une."""
+        if bas:
+            self._defilement_bas_voulu = True
+        elif fraction is not None and not self._defilement_bas_voulu:
+            self._defilement_fraction = fraction
+        if self._apres_defilement is None:
+            # after_idle : après la mise en page de Tk (repli : after(1)).
+            planifier = getattr(self.fenetre, "after_idle", None)
+            self._apres_defilement = (
+                planifier(self._executer_defilement) if planifier
+                else self.fenetre.after(1, self._executer_defilement))
+
+    def _executer_defilement(self) -> None:
+        self._apres_defilement = None
+        bas = self._defilement_bas_voulu
+        fraction = self._defilement_fraction
+        self._defilement_bas_voulu = False
+        self._defilement_fraction = None
+        try:
+            # Termine la mise en page en attente : sans cela, le contenu
+            # qu'on vient d'ajouter n'a pas encore sa taille (défilement en
+            # retard d'un message).
+            self.fenetre.update_idletasks()
+        except Exception:
+            pass
+        self._maj_zone_defilement()
+        canvas = self._canvas_conversation()
+        try:
+            if bas:
+                canvas.yview_moveto(1.0)
+            elif fraction is not None:
+                canvas.yview_moveto(fraction)
+        except Exception:
+            pass
+        if bas:
+            self._dernier_bas = True
+            # Second contrôle : une bulle qui change de hauteur après coup
+            # (retour à la ligne) ne doit pas laisser la vue juste au-dessus.
+            self._reprogrammer("_verif_defilement",
+                               DELAI_VERIF_DEFILEMENT_MS,
+                               self._verifier_defilement)
+
+    def _verifier_defilement(self) -> None:
+        self._verif_defilement = None
+        self._maj_zone_defilement()
+        debut, fin = self._vue_conversation()
+        # Seulement si on était en bas et qu'il ne manque presque rien :
+        # jamais contre un utilisateur qui a remonté la conversation.
+        if (self._dernier_bas and not est_en_bas(debut, fin)
+                and est_en_bas(debut, fin, tolerance=0.1)):
+            try:
+                self._canvas_conversation().yview_moveto(1.0)
+            except Exception:
+                pass
+
+    def _defiler_bas(self) -> None:
+        """Défile la conversation tout en bas, une fois la mise en page
+        terminée (conservé pour compatibilité)."""
+        self._planifier_defilement(True)
+
     def _reconstruire_conversation(self, entrees: list) -> None:
         """Efface et ré-affiche toute la conversation (après un
-        raccourcissement du journal, ex. plafond de 200 lignes)."""
+        raccourcissement du journal, ex. plafond de 200 lignes). La position
+        est conservée : en bas on reste en bas, sinon on revient là où
+        l'utilisateur lisait."""
+        bas = self._position_avant_changement()
+        debut = self._vue_conversation()[0]
         for enfant in self.zone_conversation.winfo_children():
             enfant.destroy()
         self._entrees_affichees = []
@@ -1166,7 +1284,7 @@ class Application:
             self._ajouter_message(entree)
         if not entrees:
             self._afficher_message_vide()
-        self._defiler_bas()
+        self._planifier_defilement(bas, None if bas else debut)
 
     def _afficher_message_vide(self) -> None:
         """Message d'accueil quand le journal est vide."""
@@ -1404,7 +1522,14 @@ class Application:
     def _sur_redimensionnement(self, _evenement=None) -> None:
         """Ajuste le retour à la ligne des bulles (120 ms après le dernier
         événement) et mémorise la géométrie (800 ms après : pas d'écriture
-        de fichier pendant qu'on tire sur le bord de la fenêtre)."""
+        de fichier pendant qu'on tire sur le bord de la fenêtre).
+
+        Garde aussi la zone de défilement à jour, et mémorise si la vue
+        était en bas avant que le retour à la ligne ne change la hauteur."""
+        if (self._apres_redimensionnement is None
+                and self._apres_defilement is None):
+            self._dernier_bas = self._est_en_bas()
+        self._maj_zone_defilement()
         self._reprogrammer("_apres_redimensionnement", DELAI_REFLUX_MS,
                            self._apres_redimensionnement_fait)
         self._reprogrammer("_apres_geometrie", DELAI_GEOMETRIE_MS,
@@ -1421,12 +1546,16 @@ class Application:
 
     def _apres_redimensionnement_fait(self) -> None:
         self._apres_redimensionnement = None
+        bas = self._dernier_bas  # vue avant le changement de retour à la ligne
         try:
             largeur = self._largeur_bulle()  # d'après winfo_width()
             if largeur != self._derniere_largeur:
                 self._derniere_largeur = largeur
                 for etiquette in self._etiquettes_bulles:
                     etiquette.configure(wraplength=largeur)
+                # Les bulles changent de hauteur : zone de défilement à
+                # recalculer, et on reste en bas si on y était.
+                self._planifier_defilement(bas)
             # Le détail d'état passe à la ligne avant l'horloge.
             self.texte_detail.configure(wraplength=max(
                 220, self.fenetre.winfo_width() - 340))
@@ -1482,14 +1611,17 @@ class Application:
 
             # Conversation : ajouts, ou reconstruction si le journal a
             # raccourci (changement de jour : nouveau fichier).
+            # La position de la vue est lue AVANT toute modification : en
+            # bas on suit le nouveau message, sinon on ne bouge pas.
             affichees = self._entrees_affichees
+            bas = self._position_avant_changement()
             if (len(entrees) < len(affichees)
                     or entrees[:len(affichees)] != affichees):
                 self._reconstruire_conversation(entrees)
             elif len(entrees) > len(affichees):
                 for entree in entrees[len(affichees):]:
                     self._ajouter_message(entree)
-                self._defiler_bas()
+                self._planifier_defilement(bas)
             elif not entrees and self._message_vide is None:
                 self._afficher_message_vide()
 
