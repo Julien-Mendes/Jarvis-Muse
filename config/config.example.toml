@@ -137,6 +137,14 @@ active = true
 largeur = 900   # largeur de la fenêtre en pixels (640 à 1600)
 hauteur = 650   # hauteur de la fenêtre en pixels (480 à 1200)
 toujours_au_premier_plan = false
+# Thème des couleurs (U2) — trois choix :
+#   "or_et_nuit"   noir et or (défaut, choix de Julien)
+#   "jarvis_bleu"  les couleurs d'origine, fond sombre et accent bleu
+#   "clair_studio" fond clair, panneaux blancs, accent bleu
+# Un nom inconnu, ou un fichier de configuration illisible : repli sur
+# "jarvis_bleu". Changer le thème = modifier cette ligne (config.toml ou
+# config.local.toml) puis relancer Jarvis ; pas encore de panneau Réglages.
+theme = "or_et_nuit"
 # Intervalle de relecture de l'état, de la conversation et des minuteurs
 # (ms) — data/hud-state.json, data/conversation.jsonl, data/timers.json.
 intervalle_ms = 500

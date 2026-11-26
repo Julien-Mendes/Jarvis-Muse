@@ -27,6 +27,11 @@ Ce que montre la fenêtre :
     recherche), Ouvrir le guide, Quitter. Position et taille de la
     fenêtre mémorisées dans data/app.json.
 
+Thèmes (U2) : trois palettes — or_et_nuit (défaut), jarvis_bleu (repli) et
+clair_studio — choisies par [app] theme de la configuration. Un thème
+inconnu ou une configuration illisible donne jarvis_bleu. Le changement se
+fait par la configuration (pas encore de panneau Réglages).
+
 Langue : les textes de la fenêtre principale suivent la langue de la
 boucle vocale — [boucle] langue de config.toml, ou le champ optionnel
 « langue » de data/hud-state.json quand la boucle l'écrit — en français
@@ -106,22 +111,111 @@ DEFAUTS = {
     "hauteur": 650,
     "toujours_au_premier_plan": False,
     "intervalle_ms": 500,
+    # Thème des couleurs : « or_et_nuit » (défaut, choix de Julien),
+    # « jarvis_bleu » (couleurs d'origine, thème de repli) ou
+    # « clair_studio ». Lu avec config_jarvis (config.toml, config.local.toml).
+    "theme": "or_et_nuit",
 }
 
-# Palette — ambiance du Jarvis de référence (Julian-Ivanov) : fond très
-# sombre, accent bleu, orbe qui pulse (bleu écoute, doré réflexion,
-# vert parole). Note : les couleurs d'état diffèrent volontairement de
-# celles du HUD (étape 6 : vert écoute, bleu réponse) — l'application
-# suit la palette des vidéos.
-COULEUR_FOND = "#0a0a0f"
-COULEUR_PANNEAU = "#14141d"
-COULEUR_BULLE_JARVIS = "#1a1a26"
-COULEUR_BULLE_UTILISATEUR = "#1a3a5c"
-COULEUR_TEXTE = "#e0e0e0"
-COULEUR_TEXTE_FAIBLE = "#888888"
-COULEUR_ACCENT = "#4a9eff"
-COULEUR_ACCENT_SURVOL = "#3a7bd5"
-COULEUR_BARRE_DEFILEMENT = "#2a2a38"
+# ---------------------------------------------------------------------------
+# Thèmes (U2) — trois palettes, choisies par [app] theme de la configuration.
+# ---------------------------------------------------------------------------
+#
+# jarvis_bleu : ambiance du Jarvis de référence (Julian-Ivanov) : fond très
+#   sombre, accent bleu, orbe qui pulse. C'est le thème de REPLI : celui qu'on
+#   obtient si le thème demandé est inconnu ou illisible.
+# or_et_nuit  : noir et or (thème par défaut, choix de Julien).
+# clair_studio: fond clair, panneaux blancs, accent bleu.
+#
+# Chaque palette définit les mêmes clés (test de contrat). Une valeur None
+# pour une option facultative = ne rien envoyer à CustomTkinter (couleur
+# d'origine de la bibliothèque), ce qui garde jarvis_bleu identique à avant.
+THEME_REPLI = "jarvis_bleu"
+THEME_DEFAUT = "or_et_nuit"
+
+THEMES = {
+    "jarvis_bleu": {
+        "mode": "dark",
+        "fond": "#0a0a0f", "panneau": "#14141d",
+        "bulle_jarvis": "#1a1a26", "bulle_utilisateur": "#1a3a5c",
+        "texte": "#e0e0e0", "texte_faible": "#888888",
+        "accent": "#4a9eff", "accent_survol": "#3a7bd5",
+        "texte_sur_accent": "#ffffff",
+        "barre_defilement": "#62627c", "barre_defilement_survol": "#8a8aa6",
+        "interrompre_texte": "#e07878", "interrompre_bordure": "#7a3a3a",
+        "interrompre_survol": "#2a1a1a",
+        "survol_liste": "#23232f",
+        "orbe_fondu": "#000000",
+        "orbe": {"repos": "#5b7a99", "ecoute": "#2a6cb8",
+                 "reflexion": "#c9a227", "reponse": "#27c96a",
+                 "erreur": "#c0392b", "arrete": "#666666"},
+        "fond_fenetre": None,
+        "champ_fond": None, "champ_bordure": None, "champ_texte": None,
+        "champ_texte_indice": None,
+    },
+    "or_et_nuit": {
+        "mode": "dark",
+        "fond": "#09090b", "panneau": "#121216",
+        "bulle_jarvis": "#18181e", "bulle_utilisateur": "#2c2412",
+        "texte": "#f2efe6", "texte_faible": "#9a9484",
+        "accent": "#e0a82e", "accent_survol": "#c4912a",
+        "texte_sur_accent": "#09090b",
+        "barre_defilement": "#7a6025", "barre_defilement_survol": "#e0a82e",
+        "interrompre_texte": "#e88a8a", "interrompre_bordure": "#7a3a3a",
+        "interrompre_survol": "#241414",
+        "survol_liste": "#1f1f26",
+        "orbe_fondu": "#000000",
+        "orbe": {"repos": "#8c7a4b", "ecoute": "#ffcf5c",
+                 "reflexion": "#f2e6c0", "reponse": "#45c08a",
+                 "erreur": "#d9534f", "arrete": "#5c5a52"},
+        "fond_fenetre": "#09090b",
+        "champ_fond": "#18181e", "champ_bordure": "#4a3d1c",
+        "champ_texte": "#f2efe6", "champ_texte_indice": "#9a9484",
+    },
+    "clair_studio": {
+        "mode": "light",
+        "fond": "#f4f6f9", "panneau": "#ffffff",
+        "bulle_jarvis": "#e6ebf2", "bulle_utilisateur": "#d4e4fb",
+        "texte": "#1b2330", "texte_faible": "#53617a",
+        "accent": "#1d6fd6", "accent_survol": "#1658ab",
+        "texte_sur_accent": "#ffffff",
+        "barre_defilement": "#7f8da3", "barre_defilement_survol": "#1d6fd6",
+        "interrompre_texte": "#b3261e", "interrompre_bordure": "#e0a8a4",
+        "interrompre_survol": "#fbe9e8",
+        "survol_liste": "#e3e9f1",
+        "orbe_fondu": "#ffffff",
+        "orbe": {"repos": "#7b8da6", "ecoute": "#0f5bb5",
+                 "reflexion": "#b87800", "reponse": "#1a8a4e",
+                 "erreur": "#c0392b", "arrete": "#9aa5b4"},
+        "fond_fenetre": "#f4f6f9",
+        "champ_fond": "#ffffff", "champ_bordure": "#c3ccd9",
+        "champ_texte": "#1b2330", "champ_texte_indice": "#53617a",
+    },
+}
+
+# Couleurs actives : réglées par appliquer_theme() avant la création des
+# widgets (Application.__init__). Au simple import, ce sont celles du thème de
+# repli (jarvis_bleu), donc rien ne change pour qui n'ouvre pas la fenêtre.
+COULEUR_FOND = THEMES[THEME_REPLI]["fond"]
+COULEUR_PANNEAU = THEMES[THEME_REPLI]["panneau"]
+COULEUR_BULLE_JARVIS = THEMES[THEME_REPLI]["bulle_jarvis"]
+COULEUR_BULLE_UTILISATEUR = THEMES[THEME_REPLI]["bulle_utilisateur"]
+COULEUR_TEXTE = THEMES[THEME_REPLI]["texte"]
+COULEUR_TEXTE_FAIBLE = THEMES[THEME_REPLI]["texte_faible"]
+COULEUR_ACCENT = THEMES[THEME_REPLI]["accent"]
+COULEUR_ACCENT_SURVOL = THEMES[THEME_REPLI]["accent_survol"]
+COULEUR_TEXTE_SUR_ACCENT = THEMES[THEME_REPLI]["texte_sur_accent"]
+COULEUR_BARRE_DEFILEMENT = THEMES[THEME_REPLI]["barre_defilement"]
+COULEUR_BARRE_DEFILEMENT_SURVOL = THEMES[THEME_REPLI]["barre_defilement_survol"]
+COULEUR_INTERROMPRE_TEXTE = THEMES[THEME_REPLI]["interrompre_texte"]
+COULEUR_INTERROMPRE_BORDURE = THEMES[THEME_REPLI]["interrompre_bordure"]
+COULEUR_INTERROMPRE_SURVOL = THEMES[THEME_REPLI]["interrompre_survol"]
+COULEUR_SURVOL_LISTE = THEMES[THEME_REPLI]["survol_liste"]
+COULEUR_ORBE_FONDU = THEMES[THEME_REPLI]["orbe_fondu"]
+COULEUR_FOND_FENETRE = THEMES[THEME_REPLI]["fond_fenetre"]
+MODE_APPARENCE = THEMES[THEME_REPLI]["mode"]
+OPTIONS_CHAMP: dict = {}
+THEME_ACTIF = THEME_REPLI
 
 ETATS = {
     # état : (texte affiché, couleur de l'orbe, période de pulsation en s)
@@ -133,6 +227,64 @@ ETATS = {
     "arrete": ("Boucle arrêtée", "#666666", 0.0),
 }
 ETATS_CONNUS = ("repos", "ecoute", "reflexion", "reponse", "erreur")
+
+
+def nom_theme(valeur) -> str:
+    """Nom de thème valide : celui demandé s'il existe, sinon le repli
+    (jarvis_bleu) — valeur inconnue, vide ou d'un autre type."""
+    if isinstance(valeur, str) and valeur.strip().lower() in THEMES:
+        return valeur.strip().lower()
+    return THEME_REPLI
+
+
+def appliquer_theme(nom) -> str:
+    """Active un thème : règle les couleurs (COULEUR_*), celles de l'orbe
+    (ETATS) et le mode d'apparence. Retourne le nom du thème réellement
+    appliqué (jarvis_bleu si `nom` est inconnu). À appeler AVANT de créer
+    les widgets : les couleurs sont lues à la création."""
+    global COULEUR_FOND, COULEUR_PANNEAU, COULEUR_BULLE_JARVIS
+    global COULEUR_BULLE_UTILISATEUR, COULEUR_TEXTE, COULEUR_TEXTE_FAIBLE
+    global COULEUR_ACCENT, COULEUR_ACCENT_SURVOL, COULEUR_TEXTE_SUR_ACCENT
+    global COULEUR_BARRE_DEFILEMENT, COULEUR_BARRE_DEFILEMENT_SURVOL
+    global COULEUR_INTERROMPRE_TEXTE, COULEUR_INTERROMPRE_BORDURE
+    global COULEUR_INTERROMPRE_SURVOL, COULEUR_SURVOL_LISTE
+    global COULEUR_ORBE_FONDU, COULEUR_FOND_FENETRE, MODE_APPARENCE
+    global OPTIONS_CHAMP, THEME_ACTIF
+    effectif = nom_theme(nom)
+    if isinstance(nom, str) and nom.strip().lower() != effectif:
+        print(f"Avertissement application : thème « {nom} » inconnu ; "
+              f"{THEME_REPLI} utilisé.", file=sys.stderr)
+    palette = THEMES[effectif]
+    COULEUR_FOND = palette["fond"]
+    COULEUR_PANNEAU = palette["panneau"]
+    COULEUR_BULLE_JARVIS = palette["bulle_jarvis"]
+    COULEUR_BULLE_UTILISATEUR = palette["bulle_utilisateur"]
+    COULEUR_TEXTE = palette["texte"]
+    COULEUR_TEXTE_FAIBLE = palette["texte_faible"]
+    COULEUR_ACCENT = palette["accent"]
+    COULEUR_ACCENT_SURVOL = palette["accent_survol"]
+    COULEUR_TEXTE_SUR_ACCENT = palette["texte_sur_accent"]
+    COULEUR_BARRE_DEFILEMENT = palette["barre_defilement"]
+    COULEUR_BARRE_DEFILEMENT_SURVOL = palette["barre_defilement_survol"]
+    COULEUR_INTERROMPRE_TEXTE = palette["interrompre_texte"]
+    COULEUR_INTERROMPRE_BORDURE = palette["interrompre_bordure"]
+    COULEUR_INTERROMPRE_SURVOL = palette["interrompre_survol"]
+    COULEUR_SURVOL_LISTE = palette["survol_liste"]
+    COULEUR_ORBE_FONDU = palette["orbe_fondu"]
+    COULEUR_FOND_FENETRE = palette["fond_fenetre"]
+    MODE_APPARENCE = palette["mode"]
+    OPTIONS_CHAMP = {
+        cle_ctk: palette[cle]
+        for cle_ctk, cle in (("fg_color", "champ_fond"),
+                             ("border_color", "champ_bordure"),
+                             ("text_color", "champ_texte"),
+                             ("placeholder_text_color", "champ_texte_indice"))
+        if palette[cle] is not None}
+    for etat, couleur in palette["orbe"].items():
+        texte, _ancienne, periode = ETATS[etat]
+        ETATS[etat] = (texte, couleur, periode)
+    THEME_ACTIF = effectif
+    return effectif
 FRAICHEUR_PTT = 2.0  # secondes : un fichier PTT plus vieux est périmé.
 
 # Mise en page (lot U1 : polissage ; les couleurs ne changent pas).
@@ -245,9 +397,15 @@ def _texte(langue: str, cle: str) -> str:
 # ---------------------------------------------------------------------------
 
 def charger_config_app(racine: Path) -> dict:
-    """Lit config.toml [app], sinon config.example.toml, sinon défauts."""
+    """Lit config.toml [app], sinon config.example.toml, sinon défauts.
+
+    Le thème ([app] theme) est lu avec config_jarvis (config.example.toml <
+    config.toml < config.local.toml). Absent : or_et_nuit. Inconnu ou
+    configuration illisible : repli sûr sur jarvis_bleu.
+    """
     config = dict(DEFAUTS)
     config["langue"] = "en"  # défaut du projet ; voir [boucle] langue
+    illisible = False
     fichier = racine / "config" / "config.toml"
     if not fichier.exists():
         fichier = racine / "config" / "config.example.toml"
@@ -274,7 +432,17 @@ def charger_config_app(racine: Path) -> dict:
                 if langue in LANGUES:
                     config["langue"] = langue
             except (ValueError, OSError):
-                pass
+                illisible = True  # config.toml cassé : thème de repli.
+    try:
+        if illisible:
+            config["theme"] = THEME_REPLI
+        else:
+            donnees_theme = config_jarvis.charger_donnees(racine / "config")
+            demande = config_jarvis.section(donnees_theme, "app").get(
+                "theme", DEFAUTS["theme"])
+            config["theme"] = nom_theme(demande)
+    except Exception:  # Un thème illisible ne doit jamais empêcher le lancement.
+        config["theme"] = THEME_REPLI
     try:
         config["largeur"] = max(640, min(1600, int(config["largeur"])))
     except (TypeError, ValueError):
@@ -609,6 +777,32 @@ def _assombrir(couleur_hex: str, facteur: float) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
+def _fond_de_fenetre(fenetre) -> None:
+    """Applique le fond du thème à une fenêtre (racine ou Historique). Sans
+    effet pour jarvis_bleu (fond d'origine de CustomTkinter) ; jamais
+    bloquant : une couleur de fond refusée n'empêche pas d'ouvrir la fenêtre."""
+    if not COULEUR_FOND_FENETRE:
+        return
+    try:
+        fenetre.configure(fg_color=COULEUR_FOND_FENETRE)
+    except Exception as erreur:
+        print(f"Avertissement application : fond de fenêtre : {erreur}",
+              file=sys.stderr)
+
+
+def _fondre(couleur_hex: str, fond_hex: str, facteur: float) -> str:
+    """Mélange une couleur #RRGGBB avec le fond de l'orbe : `facteur` 1,0 =
+    la couleur pure, 0,0 = le fond. Fond noir : identique à _assombrir()
+    (thèmes sombres) ; fond blanc : halo qui s'éclaircit (thème clair)."""
+    try:
+        c = [int(couleur_hex[i:i + 2], 16) for i in (1, 3, 5)]
+        f = [int(fond_hex[i:i + 2], 16) for i in (1, 3, 5)]
+    except (ValueError, IndexError):
+        return couleur_hex
+    mix = [int(c[i] * facteur + f[i] * (1.0 - facteur)) for i in range(3)]
+    return f"#{mix[0]:02x}{mix[1]:02x}{mix[2]:02x}"
+
+
 # ---------------------------------------------------------------------------
 # Position et taille mémorisées (data/app.json, gitignoré)
 # ---------------------------------------------------------------------------
@@ -664,9 +858,13 @@ class Application:
     def __init__(self, racine: Path, config: dict):
         self.racine = racine
         self.config = config
-        ctk.set_appearance_mode("dark")
+        # Thème (U2) : appliqué AVANT la création des widgets, qui lisent
+        # les couleurs à leur création. Inconnu : repli jarvis_bleu.
+        self.theme = appliquer_theme(config.get("theme", DEFAUTS["theme"]))
+        ctk.set_appearance_mode(MODE_APPARENCE)
 
         self.fenetre = ctk.CTk()
+        _fond_de_fenetre(self.fenetre)
         self.fenetre.title("Jarvis")
         geometrie = charger_geometrie(racine)
         if geometrie:
@@ -764,7 +962,7 @@ class Application:
                 self.centre, fg_color=COULEUR_FOND, corner_radius=0,
                 scrollbar_fg_color=COULEUR_FOND,
                 scrollbar_button_color=COULEUR_BARRE_DEFILEMENT,
-                scrollbar_button_hover_color=COULEUR_TEXTE_FAIBLE)
+                scrollbar_button_hover_color=COULEUR_BARRE_DEFILEMENT_SURVOL)
         except (TypeError, ValueError, tk.TclError):
             # Version de CustomTkinter sans ces options : barre d'origine.
             self.zone_conversation = ctk.CTkScrollableFrame(
@@ -801,7 +999,7 @@ class Application:
         self.bouton_micro = ctk.CTkButton(
             self.barre_bas, text=self.t("micro_repos"), font=_police(16, True),
             fg_color=COULEUR_ACCENT, hover_color=COULEUR_ACCENT_SURVOL,
-            text_color="#ffffff",
+            text_color=COULEUR_TEXTE_SUR_ACCENT,
             corner_radius=HAUTEUR_BOUTON_PRINCIPAL // 2,
             height=HAUTEUR_BOUTON_PRINCIPAL)
         self.bouton_micro.grid(row=0, column=0, sticky="ew",
@@ -811,9 +1009,9 @@ class Application:
 
         self.bouton_interrompre = ctk.CTkButton(
             self.barre_bas, text=self.t("interrompre"), font=_police(14),
-            fg_color="transparent", hover_color="#2a1a1a",
-            text_color="#e07878", border_width=1,
-            border_color="#7a3a3a",
+            fg_color="transparent", hover_color=COULEUR_INTERROMPRE_SURVOL,
+            text_color=COULEUR_INTERROMPRE_TEXTE, border_width=1,
+            border_color=COULEUR_INTERROMPRE_BORDURE,
             corner_radius=HAUTEUR_BOUTON_PRINCIPAL // 2,
             height=HAUTEUR_BOUTON_PRINCIPAL, width=LARGEUR_BOUTON_COLONNE,
             command=self.interrompre)
@@ -828,7 +1026,7 @@ class Application:
         # -- Barre du bas : saisie texte (étape 7.1) --------------------
         self.champ_texte = ctk.CTkEntry(
             self.barre_bas, placeholder_text=self.t("placeholder"),
-            font=_police(14), height=HAUTEUR_SAISIE)
+            font=_police(14), height=HAUTEUR_SAISIE, **OPTIONS_CHAMP)
         self.champ_texte.grid(row=2, column=0, sticky="ew",
                               padx=(16, 8), pady=(4, 14))
         self.champ_texte.bind("<Return>", lambda _e: self.envoyer_texte())
@@ -836,7 +1034,8 @@ class Application:
         self.bouton_envoyer = ctk.CTkButton(
             self.barre_bas, text=self.t("envoyer"), font=_police(14, True),
             fg_color=COULEUR_ACCENT, hover_color=COULEUR_ACCENT_SURVOL,
-            text_color="#ffffff", corner_radius=HAUTEUR_SAISIE // 2,
+            text_color=COULEUR_TEXTE_SUR_ACCENT,
+            corner_radius=HAUTEUR_SAISIE // 2,
             height=HAUTEUR_SAISIE, width=LARGEUR_BOUTON_COLONNE,
             command=self.envoyer_texte)
         self.bouton_envoyer.grid(row=2, column=1, padx=(8, 16), pady=(4, 14))
@@ -902,7 +1101,8 @@ class Application:
                 item, ORBE_CENTRE - r, ORBE_CENTRE - r,
                 ORBE_CENTRE + r, ORBE_CENTRE + r)
             self.canvas_orbe.itemconfig(
-                item, fill=_assombrir(couleur, facteur), outline="")
+                item, fill=_fondre(couleur, COULEUR_ORBE_FONDU, facteur),
+                outline="")
 
     def _animer_orbe(self) -> None:
         """Pulsation de l'orbe selon l'état (comme le frontend de
@@ -1060,6 +1260,7 @@ class Application:
             except Exception:
                 pass
         fenetre = ctk.CTkToplevel(self.fenetre)
+        _fond_de_fenetre(fenetre)
         fenetre.title("Historique — Jarvis")
         fenetre.geometry("820x600")
         fenetre.minsize(560, 400)
@@ -1073,7 +1274,8 @@ class Application:
         # Recherche (filtre les messages du jour affiché).
         self._champ_recherche = ctk.CTkEntry(
             fenetre, placeholder_text="Rechercher dans la conversation…",
-            font=ctk.CTkFont(family="Segoe UI", size=13), height=36)
+            font=ctk.CTkFont(family="Segoe UI", size=13), height=36,
+            **OPTIONS_CHAMP)
         self._champ_recherche.grid(row=0, column=0, columnspan=2,
                                    sticky="ew", padx=10, pady=10)
         self._champ_recherche.bind(
@@ -1096,7 +1298,7 @@ class Application:
             ctk.CTkButton(
                 self._liste_jours, text=libelle,
                 font=ctk.CTkFont(family="Segoe UI", size=12),
-                fg_color="transparent", hover_color="#23232f",
+                fg_color="transparent", hover_color=COULEUR_SURVOL_LISTE,
                 text_color=COULEUR_TEXTE, anchor="w",
                 command=lambda j=jour: self._choisir_jour_historique(j)
             ).pack(fill="x", padx=6, pady=3)
@@ -1118,7 +1320,7 @@ class Application:
             fenetre, text="Fermer",
             font=ctk.CTkFont(family="Segoe UI", size=13),
             fg_color=COULEUR_ACCENT, hover_color=COULEUR_ACCENT_SURVOL,
-            text_color="#ffffff", corner_radius=20, height=36,
+            text_color=COULEUR_TEXTE_SUR_ACCENT, corner_radius=20, height=36,
             command=fenetre.destroy)
         bouton_fermer.grid(row=2, column=0, columnspan=2, pady=(0, 10))
 
@@ -1351,6 +1553,8 @@ def verifier(config: dict) -> int:
               "active", True) else "")
     print(f"  [INFO]   langue de l'interface : {config.get('langue', 'en')} "
           "([boucle] langue de config.toml)")
+    print(f"  [INFO]   thème : {nom_theme(config.get('theme'))} "
+          "([app] theme ; repli : jarvis_bleu)")
     if not (DOSSIER_CONVERSATIONS.exists()
             or FICHIER_CONVERSATION.exists()):
         print("  [INFO]   aucun journal de conversation — il sera créé "
