@@ -27,6 +27,11 @@ Ce que montre la fenêtre :
     recherche), Ouvrir le guide, Quitter. Position et taille de la
     fenêtre mémorisées dans data/app.json.
 
+Langue : les textes de la fenêtre principale suivent la langue de la
+boucle vocale — [boucle] langue de config.toml, ou le champ optionnel
+« langue » de data/hud-state.json quand la boucle l'écrit — en français
+ou en anglais. La fenêtre Historique reste en français pour l'instant.
+
 L'application n'est qu'une interface : la boucle vocale
 (scripts/boucle_voix.py) doit tourner à côté (ou via
 scripts/lancer_session.ps1) — c'est elle qui écoute, réfléchit et parle.
@@ -130,6 +135,110 @@ ETATS = {
 ETATS_CONNUS = ("repos", "ecoute", "reflexion", "reponse", "erreur")
 FRAICHEUR_PTT = 2.0  # secondes : un fichier PTT plus vieux est périmé.
 
+# Mise en page (lot U1 : polissage ; les couleurs ne changent pas).
+ORBE_TAILLE = 116                 # côté du canevas de l'orbe, en pixels
+ORBE_CENTRE = ORBE_TAILLE // 2
+ORBE_RAYONS = (52, 40, 28)        # halo, milieu, cœur (échelle 1,0)
+RAYON_BULLE = 14
+MARGE_BULLE_PROCHE = 8            # côté de celui qui parle
+MARGE_BULLE_LOIN = 72             # côté opposé : jamais pleine largeur
+RESERVE_LARGEUR_BULLE = 124       # marges (80) + marges internes (28) + barre (16)
+HAUTEUR_BOUTON_PRINCIPAL = 54     # micro et Interrompre
+LARGEUR_BOUTON_COLONNE = 150      # Interrompre et Envoyer : même colonne
+HAUTEUR_SAISIE = 42               # champ texte et Envoyer
+DELAI_REFLUX_MS = 120             # retour à la ligne des bulles (anti-rebond)
+DELAI_GEOMETRIE_MS = 800          # mémorisation de la géométrie (anti-rebond)
+PAS_ANIMATION_MS = 90             # orbe qui pulse
+PAS_REPOS_MS = 200                # orbe au repos : surveillance, aucun dessin
+LARGEUR_FENETRE_MIN = 640
+HAUTEUR_FENETRE_MIN = 520         # garde ~210 px à la conversation (orbe 116 px)
+
+LANGUES = ("fr", "en")
+
+# Textes de la fenêtre principale, par langue. Les clés « etat_* » et
+# « detail_* » correspondent aux états de ETATS. La fenêtre Historique n'est
+# pas encore traduite.
+TEXTES = {
+    "fr": {
+        "etat_repos": "Jarvis est prêt",
+        "etat_ecoute": "Écoute en cours…",
+        "etat_reflexion": "Réflexion en cours…",
+        "etat_reponse": "Jarvis répond…",
+        "etat_erreur": "Une erreur est survenue",
+        "etat_arrete": "Boucle vocale arrêtée",
+        "detail_repos": "Maintenez F9 ou le bouton micro pour parler.",
+        "detail_ecoute": "Parlez, puis relâchez F9 (ou le bouton) pour envoyer.",
+        "detail_reflexion": "Jarvis prépare sa réponse…",
+        "detail_reponse": "F9 ou « Interrompre » pour couper la réponse.",
+        "detail_erreur": "Réessayez en maintenant F9.",
+        "detail_erreur_prefixe": "Erreur : ",
+        "detail_arrete": ("Lancez python scripts\\boucle_voix.py "
+                          "(ou la session Jarvis) pour démarrer."),
+        "micro_repos": "Maintenir pour parler",
+        "micro_actif": "Écoute en cours…",
+        "interrompre": "Interrompre",
+        "astuce": "ou maintenez F9",
+        "placeholder": "Écrire à Jarvis…",
+        "envoyer": "Envoyer",
+        "minuteurs": "Minuteurs",
+        "aucun_minuteur": "Aucun minuteur en cours.",
+        "minuteur_reste": "• {quoi} : dans {duree}",
+        "minuteur_echu": "• {quoi} : échue",
+        "echue": "échue",
+        "menu_fichier": "Fichier",
+        "menu_historique": "Historique…",
+        "menu_guide": "Ouvrir le guide",
+        "menu_quitter": "Quitter",
+        "vide": ("Aucune conversation pour l'instant.\n"
+                 "Maintenez F9 (ou le bouton micro) pour parler à Jarvis,\n"
+                 "ou écrivez votre message ci-dessous."),
+    },
+    "en": {
+        "etat_repos": "Jarvis is ready",
+        "etat_ecoute": "Listening…",
+        "etat_reflexion": "Thinking…",
+        "etat_reponse": "Jarvis is answering…",
+        "etat_erreur": "Something went wrong",
+        "etat_arrete": "Voice loop stopped",
+        "detail_repos": "Hold F9 or the mic button to talk.",
+        "detail_ecoute": "Speak, then release F9 (or the button) to send.",
+        "detail_reflexion": "Jarvis is preparing an answer…",
+        "detail_reponse": "Press F9 or “Interrupt” to cut the answer short.",
+        "detail_erreur": "Try again by holding F9.",
+        "detail_erreur_prefixe": "Error: ",
+        "detail_arrete": ("Start it with python scripts\\boucle_voix.py "
+                          "(or the Jarvis session)."),
+        "micro_repos": "Hold to talk",
+        "micro_actif": "Listening…",
+        "interrompre": "Interrupt",
+        "astuce": "or hold F9",
+        "placeholder": "Write to Jarvis…",
+        "envoyer": "Send",
+        "minuteurs": "Timers",
+        "aucun_minuteur": "No timers running.",
+        "minuteur_reste": "• {quoi}: in {duree}",
+        "minuteur_echu": "• {quoi}: expired",
+        "echue": "expired",
+        "menu_fichier": "File",
+        "menu_historique": "History…",
+        "menu_guide": "Open the guide",
+        "menu_quitter": "Quit",
+        "vide": ("No conversation yet.\n"
+                 "Hold F9 (or the mic button) to talk to Jarvis,\n"
+                 "or type your message below."),
+    },
+}
+# Nom affiché d'un minuteur sans étiquette (« kind » du fichier timers.json).
+GENRES_MINUTEUR = {
+    "fr": {"timer": "minuteur", "rappel": "rappel"},
+    "en": {"timer": "timer", "rappel": "reminder"},
+}
+
+
+def _texte(langue: str, cle: str) -> str:
+    """Texte de l'interface dans la langue donnée (anglais si inconnue)."""
+    return TEXTES.get(langue, TEXTES["en"])[cle]
+
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -138,6 +247,7 @@ FRAICHEUR_PTT = 2.0  # secondes : un fichier PTT plus vieux est périmé.
 def charger_config_app(racine: Path) -> dict:
     """Lit config.toml [app], sinon config.example.toml, sinon défauts."""
     config = dict(DEFAUTS)
+    config["langue"] = "en"  # défaut du projet ; voir [boucle] langue
     fichier = racine / "config" / "config.toml"
     if not fichier.exists():
         fichier = racine / "config" / "config.example.toml"
@@ -156,6 +266,12 @@ def charger_config_app(racine: Path) -> dict:
                 for cle in DEFAUTS:
                     if cle in app:
                         config[cle] = app[cle]
+                # Langue de l'interface = langue de la boucle vocale.
+                boucle = donnees.get("boucle", {})
+                langue = (str(boucle.get("langue", ""))
+                          if isinstance(boucle, dict) else "")
+                if langue in LANGUES:
+                    config["langue"] = langue
             except (ValueError, OSError):
                 pass
     try:
@@ -183,7 +299,7 @@ def lire_etat(chemin: Path = FICHIER_ETAT) -> dict:
     (la boucle vocale n'a jamais écrit d'état), « repos » par défaut sinon.
     """
     defaut = {"etat": "arrete", "transcription": "", "erreur": "",
-              "present": False}
+              "langue": "", "present": False}
     try:
         donnees = json.loads(chemin.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -193,10 +309,14 @@ def lire_etat(chemin: Path = FICHIER_ETAT) -> dict:
     etat = str(donnees.get("etat", "repos"))
     if etat not in ETATS_CONNUS:
         etat = "repos"
+    langue = str(donnees.get("langue", ""))
     return {
         "etat": etat,
         "transcription": str(donnees.get("transcription", "")),
         "erreur": str(donnees.get("erreur", "")),
+        # Champ optionnel : écrit par la boucle quand elle détecte la langue
+        # parlée du moment ; vide = rester sur la langue de la config.
+        "langue": langue if langue in LANGUES else "",
         "present": True,
     }
 
@@ -239,10 +359,10 @@ def charger_minuteurs(chemin: Path = FICHIER_MINUTEURS) -> list:
     return resultat
 
 
-def formater_compte_a_rebours(secondes: float) -> str:
-    """« 45 s », « 12 min », « 1 h 05 », « échue »."""
+def formater_compte_a_rebours(secondes: float, langue: str = "fr") -> str:
+    """« 45 s », « 12 min », « 1 h 05 », « échue » (« expired » en anglais)."""
     if secondes < 0:
-        return "échue"
+        return _texte(langue, "echue")
     if secondes < 60:
         return f"{int(secondes)} s"
     if secondes < 3600:
@@ -252,18 +372,22 @@ def formater_compte_a_rebours(secondes: float) -> str:
     return f"{heures} h {minutes:02d}"
 
 
-def formater_minuteurs(minuteurs: list, ref: datetime) -> tuple:
+def formater_minuteurs(minuteurs: list, ref: datetime,
+                       langue: str = "fr") -> tuple:
     """Lignes « <étiquette> : dans 12 min » pour le panneau minuteurs."""
+    genres = GENRES_MINUTEUR.get(langue, GENRES_MINUTEUR["en"])
     lignes = []
     for minuteur in minuteurs:
         reste = (minuteur["due"] - ref).total_seconds()
-        quoi = minuteur["label"] or minuteur["kind"]
+        quoi = minuteur["label"] or genres.get(minuteur["kind"],
+                                               minuteur["kind"])
         if reste < 0:
-            lignes.append(f"• {quoi} : échue")
+            lignes.append(_texte(langue, "minuteur_echu").format(quoi=quoi))
         else:
-            lignes.append(
-                f"• {quoi} : dans {formater_compte_a_rebours(reste)}")
-    return tuple(lignes) if lignes else ("Aucun minuteur en cours.",)
+            lignes.append(_texte(langue, "minuteur_reste").format(
+                quoi=quoi,
+                duree=formater_compte_a_rebours(reste, langue)))
+    return tuple(lignes) if lignes else (_texte(langue, "aucun_minuteur"),)
 
 
 def ecrire_ptt(chemin: Path, actif: bool) -> None:
@@ -411,34 +535,53 @@ def ecrire_demande_texte(chemin: Path, texte: str) -> None:
         pass
 
 
-def ajouter_bulle(conteneur, entree: dict, wraplength: int):
+_POLICES: dict = {}
+
+
+def _police(taille: int, gras: bool = False):
+    """Police Segoe UI partagée : une seule par (taille, graisse), au lieu
+    d'une par étiquette (la conversation compte jusqu'à 200 bulles)."""
+    cle = (taille, gras)
+    if cle not in _POLICES:
+        _POLICES[cle] = ctk.CTkFont(family="Segoe UI", size=taille,
+                                    weight="bold" if gras else "normal")
+    return _POLICES[cle]
+
+
+def ajouter_bulle(conteneur, entree: dict, wraplength: int,
+                  role_precedent: str | None = None):
     """Crée une bulle (utilisateur à droite, Jarvis à gauche) dans un
     conteneur ; retourne l'étiquette du texte (pour ajuster le retour à
-    la ligne au redimensionnement)."""
+    la ligne au redimensionnement).
+
+    `role_precedent` (optionnel) : rôle de la bulle juste au-dessus ; plus
+    d'air quand l'interlocuteur change.
+    """
     if entree["role"] == "user":
         couleur_bulle = COULEUR_BULLE_UTILISATEUR
         ancre = "e"
-        marges = (70, 6)
+        marges = (MARGE_BULLE_LOIN, MARGE_BULLE_PROCHE)
     else:
         couleur_bulle = COULEUR_BULLE_JARVIS
         ancre = "w"
-        marges = (6, 70)
+        marges = (MARGE_BULLE_PROCHE, MARGE_BULLE_LOIN)
+    interlocuteur_change = (role_precedent is not None
+                            and role_precedent != entree["role"])
     cadre = ctk.CTkFrame(conteneur, fg_color=couleur_bulle,
-                         corner_radius=12)
-    cadre.pack(anchor=ancre, padx=marges, pady=4)
+                         corner_radius=RAYON_BULLE)
+    cadre.pack(anchor=ancre, padx=marges,
+               pady=(10 if interlocuteur_change else 3, 3))
+    heure = formater_heure(entree["heure"])
     etiquette = ctk.CTkLabel(
-        cadre, text=entree["texte"],
-        font=ctk.CTkFont(family="Segoe UI", size=13),
+        cadre, text=entree["texte"], font=_police(14),
         text_color=COULEUR_TEXTE, wraplength=wraplength,
         justify="left", anchor="w")
-    etiquette.pack(fill="x", padx=12, pady=(8, 0))
-    heure = formater_heure(entree["heure"])
+    etiquette.pack(fill="x", padx=14, pady=(10, 0) if heure else (10, 10))
     if heure:
         ctk.CTkLabel(
-            cadre, text=heure,
-            font=ctk.CTkFont(family="Segoe UI", size=10),
+            cadre, text=heure, font=_police(10),
             text_color=COULEUR_TEXTE_FAIBLE, anchor="e").pack(
-                fill="x", padx=12, pady=(2, 6))
+                fill="x", padx=14, pady=(2, 8))
     return etiquette
 
 
@@ -530,32 +673,40 @@ class Application:
         else:
             self.fenetre.geometry(
                 f"{config['largeur']}x{config['hauteur']}")
-        self.fenetre.minsize(640, 480)
+        self.fenetre.minsize(LARGEUR_FENETRE_MIN, HAUTEUR_FENETRE_MIN)
         if config.get("toujours_au_premier_plan", False):
             self.fenetre.attributes("-topmost", True)
         self.fenetre.protocol("WM_DELETE_WINDOW", self.quitter)
 
+        self.langue = str(config.get("langue", "en"))
+        if self.langue not in LANGUES:
+            self.langue = "en"
         self.etat_affiche = "arrete"
         self._entrees_affichees: list = []
         self._texte_minuteurs: tuple = ()
         self._micro_enfonce = False
         self._etiquettes_bulles: list = []
         self._apres_redimensionnement = None
+        self._apres_geometrie = None
+        self._derniere_largeur = 0
+        self._horloge_affichee = ""
         self._message_vide = None
         self._fenetre_historique = None
         self._historique: dict | None = None
 
         # -- Menu ------------------------------------------------------
-        barre_menu = tk.Menu(self.fenetre)
-        menu_fichier = tk.Menu(barre_menu, tearoff=0)
-        menu_fichier.add_command(label="Historique…",
-                                 command=self.ouvrir_historique)
-        menu_fichier.add_command(label="Ouvrir le guide",
-                                 command=self.ouvrir_guide)
-        menu_fichier.add_separator()
-        menu_fichier.add_command(label="Quitter", command=self.quitter)
-        barre_menu.add_cascade(label="Fichier", menu=menu_fichier)
-        self.fenetre.config(menu=barre_menu)
+        self._barre_menu = tk.Menu(self.fenetre)
+        self._menu_fichier = tk.Menu(self._barre_menu, tearoff=0)
+        self._menu_fichier.add_command(label=self.t("menu_historique"),
+                                       command=self.ouvrir_historique)
+        self._menu_fichier.add_command(label=self.t("menu_guide"),
+                                       command=self.ouvrir_guide)
+        self._menu_fichier.add_separator()
+        self._menu_fichier.add_command(label=self.t("menu_quitter"),
+                                       command=self.quitter)
+        self._barre_menu.add_cascade(label=self.t("menu_fichier"),
+                                     menu=self._menu_fichier)
+        self.fenetre.config(menu=self._barre_menu)
 
         # -- Grille principale -----------------------------------------
         self.fenetre.grid_rowconfigure(1, weight=1)
@@ -566,36 +717,39 @@ class Application:
             self.fenetre, fg_color=COULEUR_PANNEAU, corner_radius=0)
         self.entete.grid(row=0, column=0, sticky="ew")
         self.entete.grid_columnconfigure(1, weight=1)
+        # Les deux lignes de texte se partagent la hauteur de l'orbe : le
+        # bloc de texte reste centré en face de lui.
+        self.entete.grid_rowconfigure(0, weight=1)
+        self.entete.grid_rowconfigure(1, weight=1)
 
         self.canvas_orbe = tk.Canvas(
-            self.entete, width=76, height=76, bg=COULEUR_PANNEAU,
-            highlightthickness=0, bd=0)
+            self.entete, width=ORBE_TAILLE, height=ORBE_TAILLE,
+            bg=COULEUR_PANNEAU, highlightthickness=0, bd=0)
         self.canvas_orbe.grid(row=0, column=0, rowspan=2,
-                              padx=(14, 4), pady=10)
-        self._orbe_halo = self.canvas_orbe.create_oval(4, 4, 72, 72, fill="",
-                                                        outline="")
-        self._orbe_milieu = self.canvas_orbe.create_oval(12, 12, 64, 64,
-                                                         fill="", outline="")
-        self._orbe_coeur = self.canvas_orbe.create_oval(20, 20, 56, 56,
-                                                        fill="", outline="")
+                              padx=(20, 6), pady=12)
+        (self._orbe_halo, self._orbe_milieu,
+         self._orbe_coeur) = (
+            self.canvas_orbe.create_oval(
+                ORBE_CENTRE - r, ORBE_CENTRE - r,
+                ORBE_CENTRE + r, ORBE_CENTRE + r, fill="", outline="")
+            for r in ORBE_RAYONS)
 
         self.texte_etat = ctk.CTkLabel(
-            self.entete, text="Jarvis prêt",
-            font=ctk.CTkFont(family="Segoe UI", size=18, weight="bold"),
+            self.entete, text=self.t("etat_arrete"), font=_police(20, True),
             text_color=COULEUR_TEXTE, anchor="w")
-        self.texte_etat.grid(row=0, column=1, sticky="w", padx=6, pady=(12, 0))
+        self.texte_etat.grid(row=0, column=1, sticky="sw", padx=10,
+                             pady=(0, 2))
         self.texte_detail = ctk.CTkLabel(
-            self.entete, text="Boucle vocale arrêtée",
-            font=ctk.CTkFont(family="Segoe UI", size=12),
-            text_color=COULEUR_TEXTE_FAIBLE, anchor="w")
-        self.texte_detail.grid(row=1, column=1, sticky="w", padx=6,
-                               pady=(0, 12))
+            self.entete, text=self.t("detail_arrete"), font=_police(12),
+            text_color=COULEUR_TEXTE_FAIBLE, anchor="w", justify="left",
+            wraplength=max(220, config["largeur"] - 340))
+        self.texte_detail.grid(row=1, column=1, sticky="nw", padx=10,
+                               pady=(2, 0))
 
         self.texte_horloge = ctk.CTkLabel(
-            self.entete, text="--:--:--",
-            font=ctk.CTkFont(family="Segoe UI", size=22, weight="bold"),
+            self.entete, text="--:--:--", font=_police(24, True),
             text_color=COULEUR_TEXTE)
-        self.texte_horloge.grid(row=0, column=2, rowspan=2, padx=16, pady=10)
+        self.texte_horloge.grid(row=0, column=2, rowspan=2, padx=24, pady=12)
 
         # -- Zone centrale : conversation + minuteurs -------------------
         self.centre = ctk.CTkFrame(self.fenetre, fg_color=COULEUR_FOND,
@@ -604,9 +758,21 @@ class Application:
         self.centre.grid_rowconfigure(0, weight=1)
         self.centre.grid_columnconfigure(0, weight=1)
 
-        self.zone_conversation = ctk.CTkScrollableFrame(
-            self.centre, fg_color=COULEUR_FOND, corner_radius=0,
-            scrollbar_button_color=COULEUR_BARRE_DEFILEMENT)
+        try:
+            self.zone_conversation = ctk.CTkScrollableFrame(
+                self.centre, fg_color=COULEUR_FOND, corner_radius=0,
+                scrollbar_fg_color=COULEUR_FOND,
+                scrollbar_button_color=COULEUR_BARRE_DEFILEMENT,
+                scrollbar_button_hover_color=COULEUR_TEXTE_FAIBLE)
+        except (TypeError, ValueError, tk.TclError):
+            # Version de CustomTkinter sans ces options : barre d'origine.
+            self.zone_conversation = ctk.CTkScrollableFrame(
+                self.centre, fg_color=COULEUR_FOND, corner_radius=0,
+                scrollbar_button_color=COULEUR_BARRE_DEFILEMENT)
+        try:  # Barre fine (attribut interne : au mieux, sans incidence).
+            self.zone_conversation._scrollbar.configure(width=8)
+        except Exception:
+            pass
         self.zone_conversation.grid(row=0, column=0, sticky="nsew",
                                     padx=(8, 0), pady=8)
         self.zone_conversation.bind(
@@ -617,11 +783,10 @@ class Application:
         self.panneau_minuteurs.grid(row=0, column=1, sticky="ns",
                                     padx=8, pady=8)
         self.panneau_minuteurs.configure(width=230)
-        titre_minuteurs = ctk.CTkLabel(
-            self.panneau_minuteurs, text="Minuteurs",
-            font=ctk.CTkFont(family="Segoe UI", size=14, weight="bold"),
-            text_color=COULEUR_TEXTE, anchor="w")
-        titre_minuteurs.pack(fill="x", padx=12, pady=(10, 2))
+        self.titre_minuteurs = ctk.CTkLabel(
+            self.panneau_minuteurs, text=self.t("minuteurs"),
+            font=_police(14, True), text_color=COULEUR_TEXTE, anchor="w")
+        self.titre_minuteurs.pack(fill="x", padx=12, pady=(10, 2))
         self.conteneur_minuteurs = ctk.CTkFrame(
             self.panneau_minuteurs, fg_color="transparent")
         self.conteneur_minuteurs.pack(fill="x", padx=4, pady=(0, 10))
@@ -633,81 +798,130 @@ class Application:
         self.barre_bas.grid_columnconfigure(0, weight=1)
 
         self.bouton_micro = ctk.CTkButton(
-            self.barre_bas, text="Maintenir pour parler",
-            font=ctk.CTkFont(family="Segoe UI", size=15, weight="bold"),
+            self.barre_bas, text=self.t("micro_repos"), font=_police(16, True),
             fg_color=COULEUR_ACCENT, hover_color=COULEUR_ACCENT_SURVOL,
-            text_color="#ffffff", corner_radius=24, height=48)
+            text_color="#ffffff",
+            corner_radius=HAUTEUR_BOUTON_PRINCIPAL // 2,
+            height=HAUTEUR_BOUTON_PRINCIPAL)
         self.bouton_micro.grid(row=0, column=0, sticky="ew",
-                               padx=(14, 6), pady=12)
+                               padx=(16, 8), pady=(12, 4))
         self.bouton_micro.bind("<ButtonPress-1>", self._micro_presse)
         self.bouton_micro.bind("<ButtonRelease-1>", self._micro_relache)
 
         self.bouton_interrompre = ctk.CTkButton(
-            self.barre_bas, text="Interrompre",
-            font=ctk.CTkFont(family="Segoe UI", size=13),
+            self.barre_bas, text=self.t("interrompre"), font=_police(14),
             fg_color="transparent", hover_color="#2a1a1a",
             text_color="#e07878", border_width=1,
-            border_color="#7a3a3a", corner_radius=24, height=48,
+            border_color="#7a3a3a",
+            corner_radius=HAUTEUR_BOUTON_PRINCIPAL // 2,
+            height=HAUTEUR_BOUTON_PRINCIPAL, width=LARGEUR_BOUTON_COLONNE,
             command=self.interrompre)
-        self.bouton_interrompre.grid(row=0, column=1, padx=(6, 14), pady=12)
+        self.bouton_interrompre.grid(row=0, column=1, padx=(8, 16),
+                                     pady=(12, 4))
 
         self.texte_astuce = ctk.CTkLabel(
-            self.barre_bas, text="ou maintenez F9",
-            font=ctk.CTkFont(family="Segoe UI", size=11),
+            self.barre_bas, text=self.t("astuce"), font=_police(11),
             text_color=COULEUR_TEXTE_FAIBLE)
-        self.texte_astuce.grid(row=1, column=0, columnspan=2, pady=(0, 8))
+        self.texte_astuce.grid(row=1, column=0, columnspan=2, pady=(0, 2))
 
         # -- Barre du bas : saisie texte (étape 7.1) --------------------
         self.champ_texte = ctk.CTkEntry(
-            self.barre_bas, placeholder_text="Écrire à Jarvis…",
-            font=ctk.CTkFont(family="Segoe UI", size=13), height=40)
+            self.barre_bas, placeholder_text=self.t("placeholder"),
+            font=_police(14), height=HAUTEUR_SAISIE)
         self.champ_texte.grid(row=2, column=0, sticky="ew",
-                              padx=(14, 6), pady=(0, 12))
+                              padx=(16, 8), pady=(4, 14))
         self.champ_texte.bind("<Return>", lambda _e: self.envoyer_texte())
 
         self.bouton_envoyer = ctk.CTkButton(
-            self.barre_bas, text="Envoyer",
-            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            self.barre_bas, text=self.t("envoyer"), font=_police(14, True),
             fg_color=COULEUR_ACCENT, hover_color=COULEUR_ACCENT_SURVOL,
-            text_color="#ffffff", corner_radius=20, height=40,
+            text_color="#ffffff", corner_radius=HAUTEUR_SAISIE // 2,
+            height=HAUTEUR_SAISIE, width=LARGEUR_BOUTON_COLONNE,
             command=self.envoyer_texte)
-        self.bouton_envoyer.grid(row=2, column=1, padx=(6, 14), pady=(0, 12))
+        self.bouton_envoyer.grid(row=2, column=1, padx=(8, 16), pady=(4, 14))
 
         self._dessiner_orbe(1.0)
         self.rafraichir()
         self._animer_orbe()
+
+    # -- Langue --------------------------------------------------------
+
+    def t(self, cle: str) -> str:
+        """Texte de l'interface dans la langue courante."""
+        return _texte(self.langue, cle)
+
+    def _appliquer_langue(self) -> None:
+        """Applique la langue courante aux textes fixes de la fenêtre. Les
+        textes d'état, de minuteurs et la conversation se rafraîchissent
+        seuls au prochain passage de rafraichir()."""
+        def vider_minuteurs():
+            self._texte_minuteurs = ()  # force la reconstruction du panneau
+
+        def message_vide():
+            if self._message_vide is not None:
+                self._message_vide.configure(text=self.t("vide"))
+
+        mises_a_jour = (
+            lambda: self._barre_menu.entryconfigure(
+                0, label=self.t("menu_fichier")),
+            lambda: self._menu_fichier.entryconfigure(
+                0, label=self.t("menu_historique")),
+            lambda: self._menu_fichier.entryconfigure(
+                1, label=self.t("menu_guide")),
+            lambda: self._menu_fichier.entryconfigure(
+                3, label=self.t("menu_quitter")),
+            lambda: self.titre_minuteurs.configure(text=self.t("minuteurs")),
+            lambda: self.bouton_interrompre.configure(
+                text=self.t("interrompre")),
+            lambda: self.texte_astuce.configure(text=self.t("astuce")),
+            lambda: self.bouton_envoyer.configure(text=self.t("envoyer")),
+            lambda: self.champ_texte.configure(
+                placeholder_text=self.t("placeholder")),
+            lambda: self._style_micro(self._micro_enfonce),
+            message_vide,
+            vider_minuteurs,
+        )
+        for mise_a_jour in mises_a_jour:
+            try:
+                mise_a_jour()
+            except Exception as erreur:  # Un texte non traduit n'est pas grave.
+                print(f"Avertissement application : {erreur}",
+                      file=sys.stderr)
 
     # -- Orbe ----------------------------------------------------------
 
     def _dessiner_orbe(self, echelle: float) -> None:
         """Redessine l'orbe (halo + milieu + cœur) à l'échelle donnée."""
         couleur = ETATS[self.etat_affiche][1]
-        centre = 38
-        for item, rayon, facteur in (
-                (self._orbe_halo, 34, 0.30),
-                (self._orbe_milieu, 26, 0.60),
-                (self._orbe_coeur, 18, 1.0)):
+        for item, rayon, facteur in zip(
+                (self._orbe_halo, self._orbe_milieu, self._orbe_coeur),
+                ORBE_RAYONS, (0.30, 0.60, 1.0)):
             r = rayon * echelle
             self.canvas_orbe.coords(
-                item, centre - r, centre - r, centre + r, centre + r)
+                item, ORBE_CENTRE - r, ORBE_CENTRE - r,
+                ORBE_CENTRE + r, ORBE_CENTRE + r)
             self.canvas_orbe.itemconfig(
                 item, fill=_assombrir(couleur, facteur), outline="")
 
     def _animer_orbe(self) -> None:
         """Pulsation de l'orbe selon l'état (comme le frontend de
-        référence : écoute 1,5 s, réflexion 0,8 s, réponse 0,6 s)."""
+        référence : écoute 1,5 s, réflexion 0,8 s, réponse 0,6 s).
+
+        Au repos (période nulle) rien n'est redessiné : l'orbe reste tel
+        que rafraichir() l'a dessiné au dernier changement d'état, et on
+        ne fait que surveiller l'état toutes les 200 ms.
+        """
+        delai = PAS_REPOS_MS
         try:
             periode = ETATS[self.etat_affiche][2]
             if periode > 0:
                 phase = (time.monotonic() % periode) / periode
-                echelle = 1.0 + 0.07 * math.sin(2 * math.pi * phase)
-            else:
-                echelle = 1.0
-            self._dessiner_orbe(echelle)
+                self._dessiner_orbe(1.0 + 0.07 * math.sin(2 * math.pi * phase))
+                delai = PAS_ANIMATION_MS
         except Exception:
             pass
         finally:
-            self.fenetre.after(90, self._animer_orbe)
+            self.fenetre.after(delai, self._animer_orbe)
 
     # -- Conversation --------------------------------------------------
 
@@ -716,8 +930,10 @@ class Application:
         if self._message_vide is not None:
             self._message_vide.destroy()
             self._message_vide = None
+        precedent = (self._entrees_affichees[-1]["role"]
+                     if self._entrees_affichees else None)
         etiquette = ajouter_bulle(self.zone_conversation, entree,
-                                  self._largeur_bulle())
+                                  self._largeur_bulle(), precedent)
         self._etiquettes_bulles.append(etiquette)
         self._entrees_affichees.append(entree)
 
@@ -727,7 +943,7 @@ class Application:
             largeur = self.zone_conversation.winfo_width()
         except Exception:
             largeur = 600
-        return max(240, largeur - 130)
+        return max(240, largeur - RESERVE_LARGEUR_BULLE)
 
     def _defiler_bas(self) -> None:
         """Défile la conversation tout en bas (au mieux : l'API interne
@@ -756,11 +972,7 @@ class Application:
         if self._message_vide is not None:
             return
         self._message_vide = ctk.CTkLabel(
-            self.zone_conversation,
-            text="Aucune conversation pour l'instant.\n"
-                 "Maintenez F9 (ou le bouton micro) pour parler à Jarvis,\n"
-                 "ou écrivez votre message ci-dessous.",
-            font=ctk.CTkFont(family="Segoe UI", size=13),
+            self.zone_conversation, text=self.t("vide"), font=_police(14),
             text_color=COULEUR_TEXTE_FAIBLE, justify="center")
         self._message_vide.pack(pady=40)
 
@@ -768,7 +980,7 @@ class Application:
 
     def _rafraichir_minuteurs(self, minuteurs: list, ref: datetime) -> None:
         """Reconstruit le panneau minuteurs seulement si le texte change."""
-        lignes = formater_minuteurs(minuteurs, ref)
+        lignes = formater_minuteurs(minuteurs, ref, self.langue)
         if lignes == self._texte_minuteurs:
             return
         self._texte_minuteurs = lignes
@@ -776,22 +988,35 @@ class Application:
             enfant.destroy()
         for ligne in lignes:
             ctk.CTkLabel(
-                self.conteneur_minuteurs, text=ligne,
-                font=ctk.CTkFont(family="Segoe UI", size=12),
+                self.conteneur_minuteurs, text=ligne, font=_police(12),
                 text_color=COULEUR_TEXTE, anchor="w",
                 justify="left").pack(fill="x", padx=8, pady=2)
 
     # -- Micro : push-to-talk et interruption --------------------------
 
+    def _style_micro(self, enfonce: bool) -> None:
+        """Bouton micro bien visible quand il est maintenu : couleur de
+        l'état « écoute » (celle de l'orbe) + liseré clair."""
+        if enfonce:
+            couleur = ETATS["ecoute"][1]
+            self.bouton_micro.configure(
+                text=self.t("micro_actif"), fg_color=couleur,
+                hover_color=couleur, border_width=2,
+                border_color=COULEUR_TEXTE)
+        else:
+            self.bouton_micro.configure(
+                text=self.t("micro_repos"), fg_color=COULEUR_ACCENT,
+                hover_color=COULEUR_ACCENT_SURVOL, border_width=0)
+
     def _micro_presse(self, _evenement=None) -> None:
         self._micro_enfonce = True
         ecrire_ptt(FICHIER_PTT, True)
-        self.bouton_micro.configure(text="Écoute en cours…")
+        self._style_micro(True)
 
     def _micro_relache(self, _evenement=None) -> None:
         self._micro_enfonce = False
         ecrire_ptt(FICHIER_PTT, False)
-        self.bouton_micro.configure(text="Maintenir pour parler")
+        self._style_micro(False)
 
     def interrompre(self) -> None:
         """Impulsion courte sur data/hud-ptt.json : coupe la réponse en
@@ -932,8 +1157,10 @@ class Application:
                 text_color=COULEUR_TEXTE_FAIBLE,
                 justify="center").pack(pady=40)
             return
+        precedent = None
         for entree in entrees:
-            ajouter_bulle(zone, entree, 520)
+            ajouter_bulle(zone, entree, 520, precedent)
+            precedent = entree["role"]
         try:
             zone._parent_canvas.yview_moveto(1.0)
         except Exception:
@@ -960,30 +1187,46 @@ class Application:
 
     # -- Redimensionnement (géométrie + retour à la ligne) -------------
 
-    def _sur_redimensionnement(self, _evenement=None) -> None:
-        """Mémorise la géométrie et ajuste le retour à la ligne des
-        bulles (avec un petit délai, pour ne pas le faire à chaque pixel).
-        """
-        if self._apres_redimensionnement is not None:
+    def _reprogrammer(self, attribut: str, delai_ms: int, fonction) -> None:
+        """Anti-rebond : annule l'appel en attente (s'il y en a un) et en
+        programme un nouveau dans `delai_ms`."""
+        en_attente = getattr(self, attribut)
+        if en_attente is not None:
             try:
-                self.fenetre.after_cancel(self._apres_redimensionnement)
+                self.fenetre.after_cancel(en_attente)
             except Exception:
                 pass
-        self._apres_redimensionnement = self.fenetre.after(
-            200, self._apres_redimensionnement_fait)
+        setattr(self, attribut, self.fenetre.after(delai_ms, fonction))
 
-    def _apres_redimensionnement_fait(self) -> None:
-        self._apres_redimensionnement = None
+    def _sur_redimensionnement(self, _evenement=None) -> None:
+        """Ajuste le retour à la ligne des bulles (120 ms après le dernier
+        événement) et mémorise la géométrie (800 ms après : pas d'écriture
+        de fichier pendant qu'on tire sur le bord de la fenêtre)."""
+        self._reprogrammer("_apres_redimensionnement", DELAI_REFLUX_MS,
+                           self._apres_redimensionnement_fait)
+        self._reprogrammer("_apres_geometrie", DELAI_GEOMETRIE_MS,
+                           self._sauver_geometrie_differee)
+
+    def _sauver_geometrie_differee(self) -> None:
+        self._apres_geometrie = None
         try:
             if self.fenetre.state() == "normal":
                 sauvegarder_geometrie(
                     self.racine, self.fenetre.geometry())
         except Exception:
             pass
+
+    def _apres_redimensionnement_fait(self) -> None:
+        self._apres_redimensionnement = None
         try:
-            largeur = self._largeur_bulle()
-            for etiquette in self._etiquettes_bulles:
-                etiquette.configure(wraplength=largeur)
+            largeur = self._largeur_bulle()  # d'après winfo_width()
+            if largeur != self._derniere_largeur:
+                self._derniere_largeur = largeur
+                for etiquette in self._etiquettes_bulles:
+                    etiquette.configure(wraplength=largeur)
+            # Le détail d'état passe à la ligne avant l'horloge.
+            self.texte_detail.configure(wraplength=max(
+                220, self.fenetre.winfo_width() - 340))
         except Exception:
             pass
 
@@ -996,22 +1239,27 @@ class Application:
         try:
             maintenant = datetime.now(FUSEAU)
             etat = lire_etat()
+            # Langue parlée du moment (champ optionnel écrit par la boucle).
+            if etat["langue"] and etat["langue"] != self.langue:
+                self.langue = etat["langue"]
+                self._appliquer_langue()
             minuteurs = charger_minuteurs()
             entrees = lire_conversation()
 
             # État + détail.
             etat_affiche = etat["etat"]
-            texte_etat, _couleur, _periode = ETATS[etat_affiche]
+            texte_etat = self.t(f"etat_{etat_affiche}")
             if etat_affiche == "arrete":
-                detail = ("Boucle vocale arrêtée — lancez "
-                          "python scripts\\boucle_voix.py")
+                detail = self.t("detail_arrete")
             elif etat_affiche == "erreur" and etat["erreur"]:
-                detail = f"Erreur : {etat['erreur']}"
+                detail = (self.t("detail_erreur_prefixe")
+                          + etat["erreur"][:110]
+                          + ("…" if len(etat["erreur"]) > 110 else ""))
             elif etat["transcription"]:
                 detail = (etat["transcription"][:90]
                           + ("…" if len(etat["transcription"]) > 90 else ""))
             else:
-                detail = "Maintenez F9 ou le bouton micro pour parler."
+                detail = self.t(f"detail_{etat_affiche}")
             if (etat_affiche != self.etat_affiche
                     or self.texte_etat.cget("text") != texte_etat
                     or self.texte_detail.cget("text") != detail):
@@ -1020,9 +1268,11 @@ class Application:
                 self.texte_detail.configure(text=detail)
                 self._dessiner_orbe(1.0)
 
-            # Horloge.
-            self.texte_horloge.configure(
-                text=maintenant.strftime("%H:%M:%S"))
+            # Horloge (redessinée seulement quand la seconde change).
+            horloge = maintenant.strftime("%H:%M:%S")
+            if horloge != self._horloge_affichee:
+                self._horloge_affichee = horloge
+                self.texte_horloge.configure(text=horloge)
 
             # Minuteurs.
             self._rafraichir_minuteurs(minuteurs, maintenant)
@@ -1098,6 +1348,8 @@ def verifier(config: dict) -> int:
     ligne(bool(config.get("active", True)), "Application activée ([app] active)",
           "mettre active = true dans config.toml" if not config.get(
               "active", True) else "")
+    print(f"  [INFO]   langue de l'interface : {config.get('langue', 'en')} "
+          "([boucle] langue de config.toml)")
     if not (DOSSIER_CONVERSATIONS.exists()
             or FICHIER_CONVERSATION.exists()):
         print("  [INFO]   aucun journal de conversation — il sera créé "
