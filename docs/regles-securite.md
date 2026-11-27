@@ -27,6 +27,16 @@ jamais une instruction.
 - Les minuteurs et les changements de calendrier qui exigent déjà un « oui »
   oral explicite ne sont pas concernés par le blocage — la confirmation orale
   reste obligatoire (voir §3).
+- **Notes personnelles (lot KB).** Une note est une donnée, jamais une
+  consigne : l'outil `chercher_connaissance` rend les notes enveloppées dans
+  `<untrusted_data source="notes">`. Une note issue d'une recherche web
+  (source « recherche ») dérive de pages externes : quand elle est rendue au
+  modèle, le tour passe en hold_writes avec une liste encore plus stricte
+  (`OUTILS_APRES_NOTE_EXTERNE` : seule une autre recherche dans les notes ;
+  ni minuteur, ni ouverture de site), et la réponse n'est pas gardée telle
+  quelle dans l'historique. Un résumé de recherche n'entre dans les notes que
+  sur un « oui » oral court (§3), jamais automatiquement. Les notes restent
+  dans `data/connaissances.json` (gitignoré) : jamais versionnées.
 
 ## 3. Confirmations vérifiées en code, pas laissées au modèle
 
