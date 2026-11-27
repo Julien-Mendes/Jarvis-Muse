@@ -27,13 +27,32 @@ navigateur ».
 
 - `ouvrir` : ouvre une URL dans le **navigateur par défaut** de Julien
   (pas de Playwright) — le navigateur reste ouvert naturellement.
-- `rechercher` / `lire` / `capture` / `cliquer` : Chromium **visible**
-  Playwright (fenêtre maximisée), une seule instance par processus.
+- `rechercher` / `lire` / `capture` / `cliquer` : **Google Chrome visible**
+  piloté par Playwright (canal `chrome` — Chrome seulement depuis le lot
+  C1, profil séparé sans les connexions de Julien, fenêtre maximisée, langue
+  de Chrome = langue de Jarvis), une seule instance par processus.
   Recherche DuckDuckGo + clic sur le premier résultat (patron du dépôt A).
+- **Lot C1 — session persistante** : un seul Chrome et un **onglet courant
+  réutilisé** d'un tour à l'autre ; naviguer ne crée jamais d'onglet, et un
+  site déjà affiché n'est pas rechargé (`"deja_ouvert"`). Si Julien ferme
+  l'onglet, un autre onglet ouvert est repris ; si Chrome ou le processus
+  est tombé, il est relancé proprement et Jarvis le dit (« Le navigateur
+  s'était fermé, je l'ai relancé »).
+- **Lot C1 — `chercher_et_ouvrir`** (YouTube seulement) : page de résultats
+  YouTube (adresse `results?search_query=…`, équivalent exact du champ de
+  recherche + Entrée, sans toucher à aucun formulaire), liste titre + chaîne
+  + URL, choix du résultat qui correspond au titre et à la chaîne demandés
+  (`choisir_resultat` : jamais de clic au hasard), clic sur son lien. Si
+  rien ne correspond : les 3 premiers titres sont renvoyés.
 - **Lecture seule par défaut** : navigation, recherche, clics sur liens et
   boutons, lecture de texte, capture de page. Il n'existe **aucune**
   commande pour remplir un formulaire, se connecter ou acheter — et
-  `cliquer` refuse en code tout élément situé dans un `<form>`.
+  `cliquer` refuse en code (`refus_clic`, `refus_element`) tout élément
+  situé dans un `<form>`, tout champ de saisie ou bouton d'envoi, tout lien
+  de connexion/compte/paiement, et tout bouton d'action (s'abonner, aimer,
+  commenter, partager, télécharger, accepter, fermer…). Connexion et achat
+  sont refusés même sur un simple lien. Fermer un onglet passe par
+  `fermer_onglet`, que la boucle n'envoie qu'après un « oui » oral.
 - Seules les URL http(s) sont acceptées ; `javascript:`, `file:`, `data:`
   et autres schémas sont refusés.
 
@@ -78,8 +97,8 @@ python -m venv .venv
 # 2. Installer les dépendances de l'étape 5
 pip install -r scripts\requirements-etape5.txt
 
-# 3. Installer Chromium pour Playwright (une seule fois, ~150 Mo)
-playwright install chromium
+# 3. Google Chrome doit être installé (lot C1 : Chrome seulement ;
+#    Playwright pilote le Chrome de la machine, pas de Chromium à installer)
 ```
 
 Si PowerShell bloque l'activation :
@@ -155,7 +174,9 @@ stdin (une par ligne) et répond en JSON sur stdout :
 ```json
 {"commande": "naviguer", "url": "https://example.com"}
 {"commande": "rechercher", "requete": "météo Brossard"}
+{"commande": "chercher_et_ouvrir", "site": "youtube", "titre": "...", "chaine": "..."}
 {"commande": "cliquer", "texte": "Vidéos"}
+{"commande": "fermer_onglet"}
 {"commande": "texte", "max_caracteres": 5000}
 {"commande": "capture", "sortie": "capture-page.png"}
 {"commande": "fermer"}
@@ -164,7 +185,9 @@ stdin (une par ligne) et répond en JSON sur stdout :
 
 Réponses : `{"ok": true, "titre": ..., "url": ...}` ou
 `{"ok": false, "erreur": "..."}`. Le texte de page est marqué
-`"non_fiable": true` : c'est une donnée externe.
+`"non_fiable": true` : c'est une donnée externe (de même pour la réponse
+de `chercher_et_ouvrir`). `"redemarre": true` signale que Chrome a dû être
+relancé pendant la commande.
 
 ## Utilisation — dans la boucle vocale
 
@@ -177,9 +200,28 @@ Dans `scripts/boucle_voix.py` (F9 pour parler) :
   En mode `--texte` (sans micro), la confirmation ne peut pas aboutir —
   utilisez `scripts/yeux.py decrire --fenetre` directement.
 - **« Ouvre youtube.com »** / **« Ouvre le site de la SAQ »** : le site
-  s'ouvre dans le navigateur (Playwright si disponible, sinon le
-  navigateur par défaut). **« Cherche … dans le navigateur »** : recherche
-  DuckDuckGo, premier résultat ouvert.
+  s'ouvre dans l'onglet courant de Chrome (réglage `[navigateur]
+  navigateur_defaut = "playwright"`, défaut depuis C1 ; si Chrome ne démarre
+  pas, repli sur le navigateur par défaut). Redemandé, un site déjà ouvert
+  n'est pas rouvert : « C'est déjà ouvert dans l'onglet actuel ».
+  **« Cherche … dans le navigateur »** : recherche DuckDuckGo, premier
+  résultat ouvert.
+- **« Ouvre la vidéo YouTube "…" de … »** (lot C1, par le modèle, outil
+  `chercher_et_ouvrir`) : recherche, choix du bon résultat, clic, puis
+  Jarvis dit le titre ouvert. Cette phrase est dite directement par le code
+  (le titre trouvé est une donnée externe, nettoyé et tronqué, jamais
+  redonné au modèle ; l'historique ne garde que les mots de Julien). Si rien
+  ne correspond, Jarvis le dit et lit les 3 premiers titres.
+- **« Clique sur … »** (outil `cliquer`) : clic sur un lien par son texte,
+  avec les refus en code décrits plus haut. Le titre de la page obtenue
+  n'est pas redonné au modèle.
+- **« Ferme l'onglet »** / **« Ferme Chrome »** (chemin rapide ou outil
+  `fermer_onglet`) : Jarvis demande toujours « Je ferme l'onglet ? » ; seul
+  un « oui » court dans les 30 s ferme quoi que ce soit.
+- **Limites dites clairement** : le prompt système impose de dire en une
+  phrase ce qui n'est pas possible (« Je peux ouvrir YouTube, mais je ne
+  peux pas cliquer sur ça ») au lieu d'une formule vague, et de ne pas
+  refaire une action déjà faite.
 - La lecture complète de page en boucle vocale n'est **pas** branchée :
   décision bloc 16 encore ouverte. `navigateur.py lire` reste disponible
   en ligne de commande.
@@ -209,7 +251,9 @@ Dans `scripts/boucle_voix.py` (F9 pour parler) :
 
 - **« module playwright n'est pas installé »** : `pip install -r
   scripts\requirements-etape5.txt` (dans le venv activé).
-- **« Chromium introuvable »** : `playwright install chromium`.
+- **« Google Chrome introuvable »** : le contrôle du navigateur ne
+  fonctionne qu'avec Chrome (lot C1) — installez Google Chrome ; Chromium
+  de Playwright n'est plus utilisé.
 - **« module Pillow n'est pas installé »** : `pip install -r
   scripts\requirements-etape5.txt`.
 - **« La capture de la fenêtre active n'est prise en charge que sous
@@ -238,4 +282,9 @@ Dans `scripts/boucle_voix.py` (F9 pour parler) :
   (`python scripts\yeux.py decrire --fenetre`), ou repasser à Anthropic
   (`fournisseur_vision = "anthropic"` dans `config.toml`).
 - La lecture complète de page en boucle vocale attend la décision bloc 16.
+- Lot C1 : `chercher_et_ouvrir` ne connaît que YouTube ; les autres sites
+  passent par `ouvrir_navigateur` + `cliquer`. Le relevé des résultats
+  dépend de la structure de la page YouTube (sélecteurs
+  `ytd-video-renderer` / `a#video-title`, vérifiés le 26 nov. 2026) : à
+  revoir si YouTube change sa page.
 - Étape suivante (6) : HUD local léger + lancement de session.
