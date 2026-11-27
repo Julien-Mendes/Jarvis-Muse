@@ -19,6 +19,11 @@ Ce que montre la fenêtre :
   - Panneau recherches (lot R1) : recherches différées lues dans
     data/recherches.json (lecture seule) avec leur statut ; un clic sur
     une recherche ouvre sa réponse et ses sources (titres + URL).
+  - Panneau Connaissances (lot KB) : notes personnelles lues dans
+    data/connaissances.json (texte + date), la plus récente d'abord ; la
+    croix d'une note la supprime après une seconde confirmation (« Supprimer ? »
+    pendant 4 s). C'est la seule écriture de l'application dans data/ (hors
+    PTT, demande texte et géométrie), faite sous verrou par connaissances.py.
   - Bouton micro à maintenir enfoncé = push-to-talk (même mécanisme que
     le HUD : data/hud-ptt.json) ; bouton « Interrompre » pour couper la
     réponse en cours (comme F9 pendant une réponse).
@@ -76,6 +81,7 @@ if str(Path(__file__).resolve().parent) not in sys.path:
 
 import config_jarvis  # noqa: E402
 import recherche as recherche_mod  # noqa: E402 — lot R1 (lecture seule).
+import connaissances as connaissances_mod  # noqa: E402 — lot KB.
 
 # Fuseau horaire : [general] fuseau_horaire de la configuration (K1).
 FUSEAU = config_jarvis.fuseau()
@@ -85,6 +91,7 @@ FICHIER_ETAT = RACINE / "data" / "hud-state.json"
 FICHIER_PTT = RACINE / "data" / "hud-ptt.json"
 FICHIER_MINUTEURS = RACINE / "data" / "timers.json"
 FICHIER_RECHERCHES = RACINE / "data" / "recherches.json"
+FICHIER_CONNAISSANCES = RACINE / "data" / "connaissances.json"
 DOSSIER_CONVERSATIONS = RACINE / "data" / "conversations"
 # Ancien journal unique (étape 7) : plus écrit par la boucle, lu en repli
 # si le journal du jour n'existe pas encore.
@@ -349,6 +356,11 @@ TEXTES = {
         "recherche_fenetre": "Recherche — Jarvis",
         "recherche_sources": "Sources",
         "recherche_attente": "Pas encore de réponse : la recherche est {statut}.",
+        "connaissances": "Connaissances",
+        "aucune_note": "Aucune note.\nDites « note que… » pour en ajouter une.",
+        "supprimer_note": "Supprimer cette note",
+        "confirmer_suppression": "Supprimer ?",
+        "notes_en_plus": "… et {n} de plus (python scripts\\connaissances.py lister)",
         "fermer": "Fermer",
         "echue": "échue",
         "menu_fichier": "Fichier",
@@ -389,6 +401,11 @@ TEXTES = {
         "recherche_fenetre": "Research — Jarvis",
         "recherche_sources": "Sources",
         "recherche_attente": "No answer yet: the research is {statut}.",
+        "connaissances": "Knowledge",
+        "aucune_note": "No notes.\nSay “note that…” to add one.",
+        "supprimer_note": "Delete this note",
+        "confirmer_suppression": "Delete?",
+        "notes_en_plus": "… and {n} more (python scripts\\connaissances.py lister)",
         "fermer": "Close",
         "echue": "expired",
         "menu_fichier": "File",
@@ -560,6 +577,36 @@ def formater_recherches(recherches: list, langue: str = "fr") -> tuple:
         lignes.append(f"• {question} — "
                       f"{recherche_mod.etiquette_statut(tache, langue)}")
     return tuple(lignes) if lignes else (_texte(langue, "aucune_recherche"),)
+
+
+MAX_NOTES_PANNEAU = 50          # au-delà : « … et N de plus » (widgets légers)
+DELAI_CONFIRMATION_SUPPRESSION_MS = 4000
+
+
+def charger_notes(chemin: Path | None = None) -> list:
+    """Lit data/connaissances.json (lecture seule) ; la plus récente d'abord.
+
+    Fichier absent ou illisible : liste vide — l'application ne le répare
+    jamais (c'est connaissances.py, sous verrou, qui écrit).
+    """
+    try:
+        donnees = json.loads(Path(chemin or FICHIER_CONNAISSANCES).read_text(
+            encoding="utf-8"))
+        notes = donnees.get("notes", [])
+    except (OSError, ValueError, AttributeError):
+        return []
+    propres = [n for n in notes if isinstance(n, dict)
+               and isinstance(n.get("id"), int)
+               and isinstance(n.get("texte"), str) and n["texte"].strip()]
+    return sorted(propres, key=lambda n: -n["id"])
+
+
+def formater_notes(notes: list, langue: str = "fr") -> tuple:
+    """(texte court, date) de chaque note du panneau Connaissances."""
+    return tuple(
+        (recherche_mod.texte_parle(n["texte"], 90),
+         connaissances_mod.formater_date(str(n.get("cree_le", "")), langue))
+        for n in notes[:MAX_NOTES_PANNEAU])
 
 
 def formater_compte_a_rebours(secondes: float, langue: str = "fr") -> str:
@@ -1021,7 +1068,7 @@ class Application:
             self.zone_conversation._scrollbar.configure(width=8)
         except Exception:
             pass
-        self.zone_conversation.grid(row=0, column=0, rowspan=2,
+        self.zone_conversation.grid(row=0, column=0, rowspan=3,
                                     sticky="nsew", padx=(8, 0), pady=8)
         # add="+" : CTkScrollableFrame met à jour sa zone de défilement
         # (scrollregion) dans sa propre liaison <Configure> ; sans add="+",
@@ -1044,11 +1091,15 @@ class Application:
         self.conteneur_minuteurs.pack(fill="x", padx=4, pady=(0, 10))
 
         # Panneau Recherches (lot R1), sous les minuteurs : lecture seule.
-        self.centre.grid_rowconfigure(1, weight=1)
+        # Lot KB : minuteurs et recherches restent compacts en haut ; le
+        # panneau Connaissances (rangée 2) prend la hauteur qui reste.
+        self.centre.grid_rowconfigure(0, weight=0)
+        self.centre.grid_rowconfigure(1, weight=0)
+        self.centre.grid_rowconfigure(2, weight=1)
         self.panneau_recherches = ctk.CTkFrame(
             self.centre, fg_color=COULEUR_PANNEAU, corner_radius=12)
         self.panneau_recherches.grid(row=1, column=1, sticky="new",
-                                     padx=8, pady=(4, 8))
+                                     padx=8, pady=4)
         self.panneau_recherches.configure(width=230)
         self.titre_recherches = ctk.CTkLabel(
             self.panneau_recherches, text=self.t("recherches"),
@@ -1057,6 +1108,28 @@ class Application:
         self.conteneur_recherches = ctk.CTkFrame(
             self.panneau_recherches, fg_color="transparent")
         self.conteneur_recherches.pack(fill="x", padx=4, pady=(0, 10))
+
+        # Panneau Connaissances (lot KB), sous les recherches : notes (texte
+        # + date) et suppression confirmée. Liste défilante à elle : la
+        # conversation garde son propre défilement (U2), inchangé.
+        self.panneau_connaissances = ctk.CTkFrame(
+            self.centre, fg_color=COULEUR_PANNEAU, corner_radius=12)
+        self.panneau_connaissances.grid(row=2, column=1, sticky="nsew",
+                                        padx=8, pady=(4, 8))
+        self.panneau_connaissances.configure(width=230)
+        self.titre_connaissances = ctk.CTkLabel(
+            self.panneau_connaissances, text=self.t("connaissances"),
+            font=_police(14, True), text_color=COULEUR_TEXTE, anchor="w")
+        self.titre_connaissances.pack(fill="x", padx=12, pady=(10, 2))
+        self.conteneur_connaissances = ctk.CTkScrollableFrame(
+            self.panneau_connaissances, fg_color=COULEUR_PANNEAU,
+            corner_radius=0, width=200, height=120,
+            scrollbar_button_color=COULEUR_BARRE_DEFILEMENT)
+        self.conteneur_connaissances.pack(fill="both", expand=True,
+                                          padx=4, pady=(0, 10))
+        self._cle_connaissances: tuple = ()
+        self._note_a_confirmer: int | None = None
+        self._apres_confirmation_note = None
 
         # -- Barre du bas : micro + interruption ------------------------
         self.barre_bas = ctk.CTkFrame(
@@ -1125,6 +1198,7 @@ class Application:
         def vider_minuteurs():
             self._texte_minuteurs = ()  # force la reconstruction du panneau
             self._cle_recherches = ()
+            self._cle_connaissances = ()
 
         def message_vide():
             if self._message_vide is not None:
@@ -1142,6 +1216,8 @@ class Application:
             lambda: self.titre_minuteurs.configure(text=self.t("minuteurs")),
             lambda: self.titre_recherches.configure(
                 text=self.t("recherches")),
+            lambda: self.titre_connaissances.configure(
+                text=self.t("connaissances")),
             lambda: self.bouton_interrompre.configure(
                 text=self.t("interrompre")),
             lambda: self.texte_astuce.configure(text=self.t("astuce")),
@@ -1444,6 +1520,83 @@ class Application:
             text_color=COULEUR_TEXTE_SUR_ACCENT, corner_radius=18, height=34,
             command=fenetre.destroy).pack(pady=(0, 10))
 
+    # -- Connaissances (lot KB) ----------------------------------------
+
+    def _rafraichir_connaissances(self, notes: list) -> None:
+        """Reconstruit le panneau Connaissances seulement s'il a changé."""
+        lignes = formater_notes(notes, self.langue)
+        cle = (lignes, len(notes), self._note_a_confirmer,
+               tuple(n["id"] for n in notes[:MAX_NOTES_PANNEAU]))
+        if cle == self._cle_connaissances:
+            return
+        self._cle_connaissances = cle
+        for enfant in self.conteneur_connaissances.winfo_children():
+            enfant.destroy()
+        if not notes:
+            ctk.CTkLabel(
+                self.conteneur_connaissances, text=self.t("aucune_note"),
+                font=_police(12), text_color=COULEUR_TEXTE_FAIBLE,
+                anchor="w", justify="left", wraplength=180
+            ).pack(fill="x", padx=8, pady=2)
+            return
+        for (texte_note, date), note in zip(lignes, notes):
+            ligne = ctk.CTkFrame(self.conteneur_connaissances,
+                                 fg_color="transparent")
+            ligne.pack(fill="x", padx=2, pady=2)
+            ligne.grid_columnconfigure(0, weight=1)
+            ctk.CTkLabel(
+                ligne, text=texte_note, font=_police(12),
+                text_color=COULEUR_TEXTE, anchor="w", justify="left",
+                wraplength=150).grid(row=0, column=0, sticky="w", padx=(6, 2))
+            ctk.CTkLabel(
+                ligne, text=date, font=_police(10),
+                text_color=COULEUR_TEXTE_FAIBLE, anchor="w"
+            ).grid(row=1, column=0, sticky="w", padx=(6, 2))
+            arme = self._note_a_confirmer == note["id"]
+            ctk.CTkButton(
+                ligne, text=self.t("confirmer_suppression") if arme else "✕",
+                font=_police(11, arme), width=72 if arme else 26, height=24,
+                corner_radius=12, fg_color="transparent",
+                hover_color=COULEUR_INTERROMPRE_SURVOL,
+                text_color=(COULEUR_INTERROMPRE_TEXTE if arme
+                            else COULEUR_TEXTE_FAIBLE),
+                border_width=1 if arme else 0,
+                border_color=COULEUR_INTERROMPRE_BORDURE,
+                command=lambda i=note["id"]: self.supprimer_note(i)
+            ).grid(row=0, column=1, rowspan=2, padx=(2, 4))
+        if len(notes) > MAX_NOTES_PANNEAU:
+            ctk.CTkLabel(
+                self.conteneur_connaissances,
+                text=self.t("notes_en_plus").format(
+                    n=len(notes) - MAX_NOTES_PANNEAU),
+                font=_police(10), text_color=COULEUR_TEXTE_FAIBLE,
+                anchor="w", justify="left", wraplength=180
+            ).pack(fill="x", padx=8, pady=2)
+
+    def supprimer_note(self, ident: int) -> None:
+        """Premier clic sur la croix : « Supprimer ? » pendant 4 s. Second
+        clic sur la même note : suppression (data/connaissances.json, sous
+        verrou). Jamais de suppression sur un seul clic."""
+        if self._note_a_confirmer != ident:
+            self._note_a_confirmer = ident
+            self._reprogrammer("_apres_confirmation_note",
+                               DELAI_CONFIRMATION_SUPPRESSION_MS,
+                               self._annuler_confirmation_note)
+        else:
+            self._note_a_confirmer = None
+            try:
+                connaissances_mod.supprimer(FICHIER_CONNAISSANCES, ident)
+            except OSError as erreur:
+                print(f"Avertissement application : suppression de la note : "
+                      f"{erreur}", file=sys.stderr)
+        self._rafraichir_connaissances(charger_notes())
+
+    def _annuler_confirmation_note(self) -> None:
+        self._apres_confirmation_note = None
+        if self._note_a_confirmer is not None:
+            self._note_a_confirmer = None
+            self._rafraichir_connaissances(charger_notes())
+
     # -- Micro : push-to-talk et interruption --------------------------
 
     def _style_micro(self, enfonce: bool) -> None:
@@ -1710,6 +1863,7 @@ class Application:
                 self._appliquer_langue()
             minuteurs = charger_minuteurs()
             recherches = charger_recherches()
+            notes = charger_notes()
             entrees = lire_conversation()
 
             # État + détail.
@@ -1743,6 +1897,7 @@ class Application:
             # Minuteurs.
             self._rafraichir_minuteurs(minuteurs, maintenant)
             self._rafraichir_recherches(recherches)
+            self._rafraichir_connaissances(notes)
 
             # Conversation : ajouts, ou reconstruction si le journal a
             # raccourci (changement de jour : nouveau fichier).

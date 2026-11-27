@@ -326,6 +326,20 @@ def marquer_lue(chemin: Path, ident: int) -> None:
     _modifier(chemin, ident, lue=True, annoncee=True)
 
 
+def marquer_gardee(chemin: Path, ident: int) -> None:
+    """Lot KB : le résumé a été gardé dans les notes (sur le oui de Julien) ;
+    Jarvis ne le propose plus."""
+    _modifier(chemin, ident, gardee_en_note=True)
+
+
+def obtenir(chemin: Path, ident: int) -> dict | None:
+    """Une tâche par son numéro (copie), ou None."""
+    for t in charger(chemin)["recherches"]:
+        if t["id"] == ident:
+            return dict(t)
+    return None
+
+
 def choisir(taches: list, sujet: str | None = None) -> dict | None:
     """La tâche dont parle Julien.
 

@@ -405,10 +405,17 @@ class F15HoldWrites(unittest.TestCase):
         texte externe au modèle. Le jour où ce test échoue (lecture de page,
         suivi de question sur l'écran…), il faut AUSSI revoir OUTILS_SANS_ECRITURE
         (ouvrir_navigateur ne doit plus y figurer) et ajouter un test
-        d'injection : voir docs/regles-securite.md §1-§2."""
+        d'injection : voir docs/regles-securite.md §1-§2.
+
+        Lot KB : chercher_connaissance rend au modèle une note issue d'une
+        recherche web (texte dérivé de pages) — lecture externe CONDITIONNELLE,
+        gérée à part : la liste permise devient OUTILS_APRES_NOTE_EXTERNE, sans
+        ouvrir_navigateur (test d'injection : test_kb_connaissances.py)."""
         self.assertEqual(boucle_voix.OUTILS_LECTURE_EXTERNE, set())
         self.assertEqual(boucle_voix.OUTILS_SANS_ECRITURE,
                          {"decrire_ecran", "ouvrir_navigateur"})
+        self.assertEqual(boucle_voix.OUTILS_APRES_NOTE_EXTERNE,
+                         {"chercher_connaissance"})
 
     def test_confirmation_orale_regles_inchangees(self):
         f = boucle_voix.est_confirmation_courte

@@ -364,7 +364,9 @@ class DonneesExternes(BaseTemp):
             etat_tour=etat_tour)
         self.assertEqual(
             reponse, "Voici ta recherche sur « vélos », Julien : Le vélo A "
-            "gagne. Sources : « Comparatif », sur velo-test.example.")
+            "gagne. Sources : « Comparatif », sur velo-test.example. "
+            # Lot KB : proposition de garder le résumé (oui oral seulement).
+            "Veux-tu que je garde ça dans tes notes ?")
         cerveau.repondre.assert_not_called()
         self.assertTrue(etat_tour["externe"])
         self.assertNotIn("vélo A", etat_tour["historique"])
