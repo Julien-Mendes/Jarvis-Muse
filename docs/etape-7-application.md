@@ -154,6 +154,45 @@ La position et la taille exactes sont mémorisée dans `data/app.json`
 (gitignoré) quand vous déplacez ou redimensionnez la fenêtre — elles
 priment sur `largeur` / `hauteur` au démarrage suivant.
 
+### Thèmes
+
+`theme` dans `[app]` : `or_et_nuit` (défaut), `jarvis_bleu` (repli),
+`clair_studio`, ou **`centre_de_commande`** (lot esthétique, à l'essai).
+
+Pour essayer `centre_de_commande`, dans `config/config.local.toml` (privé,
+prioritaire) ou `config/config.toml` :
+
+```toml
+[app]
+theme = "centre_de_commande"
+```
+
+puis relancer Jarvis. Revenir en arrière : remettre `"or_et_nuit"` (ou
+supprimer la ligne).
+
+`centre_de_commande` reprend le langage visuel de la référence
+`ref-visuel/jarvis-exemple.png` (« JARVIS Command Center ») sans transformer
+la fenêtre en tableau de bord :
+
+- fond bleu nuit, accent cyan, panneaux bordés d'un liseré cyan, titres en
+  capitales (police Bahnschrift, fournie avec Windows 10+ ; le texte courant
+  reste en Segoe UI) ;
+- orbe en **globe filaire** (méridiens, parallèles, anneau d'orbite et
+  satellite) aux couleurs de l'état, qui tourne en écoutant, réfléchissant
+  ou répondant — immobile au repos (aucun dessin, ~0 % CPU) ;
+- **pastille d'état** colorée au-dessus de l'horloge (● EN LIGNE vert,
+  ● ÉCOUTE cyan, ● ANALYSE ambre, ● ERREUR rouge, ● HORS LIGNE gris) ;
+- listes en **tuiles** : minuteurs avec **jauge circulaire** du temps
+  restant (cyan, ambre dans la dernière minute, rouge échu), recherches avec
+  un point de statut (vert prête, cyan en cours, ambre en attente, rouge
+  échec), notes avec leur date ;
+- bulles bordées, bouton micro en **pilule sombre au contour cyan**.
+
+Les tailles du lot U1 ne changent pas (orbe 116 px, boutons, polices).
+Mesuré sur la machine de développement : ~49 Mo de RAM, 0,00 % CPU au repos
+sans minuteur, ~0,2 % avec un compte à rebours à la seconde ou pendant que
+le globe tourne.
+
 ## Sécurité
 
 - **Aucun serveur réseau** : l'application et la boucle communiquent
