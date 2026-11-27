@@ -11,7 +11,9 @@ Deux usages :
      scripts/boucle_voix.py :
          python scripts/navigateur.py --interactif
      Commandes : ping, naviguer, rechercher, chercher_et_ouvrir, cliquer,
-     fermer_onglet, texte, capture, fermer.
+     fermer_onglet, texte, capture, fermer — et, pour la recherche
+     différée (lot R1, avec --fond : Chrome réduit, processus séparé),
+     resultats_web et ouvrir_resultat.
      Réponses JSON : {"ok": true, ...} ou {"ok": false, "erreur": "..."} ;
      "redemarre": true quand Chrome a dû être relancé (session tombée).
 
@@ -120,6 +122,36 @@ def url_recherche(requete: str) -> str:
     return "https://duckduckgo.com/?q=" + quote_plus(requete.strip())
 
 
+def url_recherche_html(requete: str) -> str:
+    """Version HTML (sans JavaScript) de la recherche DuckDuckGo — utilisée
+    par la recherche différée (lot R1) pour lister les résultats."""
+    return "https://html.duckduckgo.com/html/?q=" + quote_plus(requete.strip())
+
+
+def adresse_resultat(href: str) -> str | None:
+    """Adresse réelle d'un lien de résultat DuckDuckGo, ou None.
+
+    Les liens de la version HTML passent par « duckduckgo.com/l/?uddg=… » :
+    on en extrait l'adresse cible. Les publicités (« y.js »), les liens
+    internes de DuckDuckGo et tout schéma non http(s) sont refusés.
+    """
+    from urllib.parse import parse_qs, unquote
+
+    href = str(href or "").strip()
+    if href.startswith("//"):
+        href = "https:" + href
+    partie = urlparse(href)
+    hote = partie.netloc.lower()
+    if hote.endswith("duckduckgo.com"):
+        if partie.path.startswith("/l/"):
+            cible = parse_qs(partie.query).get("uddg", [""])[0]
+            return adresse_resultat(unquote(cible)) if cible else None
+        return None  # publicité (y.js) ou page interne.
+    if partie.scheme not in ("http", "https") or "." not in hote:
+        return None
+    return href
+
+
 # ---------------------------------------------------------------------------
 # Garde-fous du clic (C1) — vérifiés en code, jamais laissés au modèle
 # ---------------------------------------------------------------------------
@@ -165,6 +197,12 @@ _MOTIF_LIEN_INTERDIT = re.compile(
     r"(?i)(accounts\.google\.|/signin|/sign-in|/login|/log-in|/logout|"
     r"/register|/signup|/sign-up|/checkout|/cart|/payment|/purchase|"
     r"/account|/premium|servicelogin)")
+
+
+def lien_interdit(url: str) -> bool:
+    """Vrai si l'adresse mène à une page de connexion, de compte ou de
+    paiement (même liste que les garde-fous du clic)."""
+    return bool(_MOTIF_LIEN_INTERDIT.search(str(url or "")))
 
 
 def normaliser_texte(texte: str) -> str:
@@ -396,13 +434,17 @@ class Navigateur:
     proprement et `redemarre` passe à True (la boucle le dit à Julien).
     """
 
-    def __init__(self):
+    def __init__(self, fond: bool = False):
         self._playwright = None
         self._navigateur = None
         self._contexte = None
         self.page = None
         self._a_demarre = False
         self.redemarre = False
+        # Lot R1 : `fond` = Chrome réduit dans la barre des tâches, pour la
+        # recherche différée — un processus et un profil distincts de la
+        # session de la boucle vocale, qui n'est jamais touchée.
+        self.fond = fond
 
     def demarrer(self) -> None:
         """Lance Google Chrome visible (canal « chrome », pas Chromium).
@@ -420,8 +462,13 @@ class Navigateur:
                 "avec : pip install -r scripts/requirements-etape5.txt")
         try:
             self._playwright = sync_playwright().start()
+            # Fond (lot R1) : vraie fenêtre Chrome, réduite dès le lancement.
+            # Pas de mode invisible (headless) : DuckDuckGo lui oppose un défi
+            # anti-robot (constaté le 26 nov. 2026), qu'on ne contourne pas.
             self._navigateur = self._playwright.chromium.launch(
-                channel="chrome", headless=False, args=["--start-maximized"])
+                channel="chrome", headless=False,
+                args=["--start-minimized"] if self.fond
+                else ["--start-maximized"])
             self._contexte = self._navigateur.new_context(
                 no_viewport=True, locale=LOCALE_NAVIGATEUR)
             # Un lien qui ouvre un nouvel onglet devient l'onglet courant.
@@ -640,6 +687,80 @@ class Navigateur:
         except Exception:
             return False
 
+    def resultats_web(self, requete: str) -> list:
+        """Recherche DuckDuckGo (version HTML) et liste des résultats
+        organiques : [{"titre", "url"}] (données externes, 10 au plus).
+
+        Lot R1 (recherche différée) : même principe que chercher_et_ouvrir —
+        la recherche passe par l'adresse de la page de résultats, aucun
+        formulaire n'est rempli ni soumis.
+        """
+        requete = (requete or "").strip()
+        if not requete:
+            raise ValueError("Requête de recherche vide.")
+        self._assurer_demarre()
+
+        def _chercher():
+            self.page.goto(url_recherche_html(requete),
+                           timeout=TIMEOUT_NAVIGATION_MS,
+                           wait_until="domcontentloaded")
+            return self.page.evaluate(SCRIPT_RESULTATS_WEB) or []
+
+        bruts = self.avec_reprise(_chercher)
+        propres, vus = [], set()
+        for r in bruts:
+            if not isinstance(r, dict):
+                continue
+            url = adresse_resultat(r.get("href", ""))
+            if not url or url in vus or lien_interdit(url):
+                continue
+            vus.add(url)
+            propres.append({"titre": " ".join(
+                str(r.get("titre", "")).split())[:200], "url": url})
+            if len(propres) >= 10:
+                break
+        return propres
+
+    def ouvrir_resultat(self, url: str) -> dict:
+        """Ouvre un résultat de la page de résultats affichée, par un clic
+        sur son lien (mêmes garde-fous que `cliquer` : jamais un élément de
+        formulaire, jamais un lien de connexion ou de paiement). Si le lien
+        n'est pas cliquable, même cible, même onglet : navigation directe.
+        """
+        url = normaliser_url(url)
+        if lien_interdit(url):
+            raise RuntimeError("Clic refusé : ce lien mène à une page de "
+                               "connexion, de compte ou de paiement.")
+        self._assurer_demarre()
+        clique = False
+        try:
+            for lien in self.page.locator("a.result__a, a[data-testid="
+                                          "'result-title-a']").all()[:15]:
+                href = adresse_resultat(lien.get_attribute("href") or "")
+                if href != url:
+                    continue
+                info = lien.evaluate(SCRIPT_INFO_ELEMENT)
+                if refus_element(info if isinstance(info, dict)
+                                 else {"formulaire": True}):
+                    break
+                lien.click(timeout=5000)
+                self.page.wait_for_load_state("domcontentloaded",
+                                              timeout=TIMEOUT_NAVIGATION_MS)
+                clique = True
+                break
+        except Exception:
+            clique = False
+        if not clique:
+            self.avec_reprise(lambda: self.page.goto(
+                url, timeout=TIMEOUT_NAVIGATION_MS,
+                wait_until="domcontentloaded"))
+        time.sleep(min(DELAI_APRES_NAVIGATION, 2.0))
+        finale = self.page.url
+        if lien_interdit(finale):
+            # Redirigé vers une connexion ou un paiement : on ne lit rien.
+            raise RuntimeError("page de connexion ou de paiement : ignorée")
+        return {"titre": self.page.title(), "url": finale, "clique": clique}
+
     def texte_page(self, max_caracteres: int = MAX_CARACTERES_DEFAUT) -> str:
         """Extrait le texte visible de la page courante (tronqué).
 
@@ -748,6 +869,23 @@ class Navigateur:
         return {"sortie": str(sortie), "url": self.page.url}
 
 
+# Résultats organiques de DuckDuckGo (version HTML, ou version JavaScript en
+# repli) : texte et adresse brute du lien de titre ; publicités filtrées
+# ensuite par adresse_resultat().
+SCRIPT_RESULTATS_WEB = r"""
+(() => {
+  const sortie = [];
+  for (const a of document.querySelectorAll(
+      "a.result__a, a[data-testid='result-title-a']")) {
+    if (a.closest('.result--ad, [data-testid="ad"]')) continue;
+    sortie.push({titre: (a.textContent || "").trim(),
+                 href: a.getAttribute("href") || ""});
+    if (sortie.length >= 20) break;
+  }
+  return sortie;
+})()
+"""
+
 # Ce que le code vérifie de l'élément avant de cliquer (refus_element).
 SCRIPT_INFO_ELEMENT = """
 el => {
@@ -769,9 +907,12 @@ el => {
 # Mode interactif (JSON lignes) — utilisé par scripts/boucle_voix.py
 # ---------------------------------------------------------------------------
 
-def boucle_interactive() -> int:
-    """Lit des commandes JSON sur stdin, répond en JSON sur stdout."""
-    navigateur = Navigateur()
+def boucle_interactive(fond: bool = False) -> int:
+    """Lit des commandes JSON sur stdin, répond en JSON sur stdout.
+
+    `fond` (lot R1) : Chrome réduit, pour la recherche différée.
+    """
+    navigateur = Navigateur(fond=True) if fond else Navigateur()
     print("Navigateur interactif prêt (JSON lignes sur stdin).",
           file=sys.stderr, flush=True)
     try:
@@ -800,6 +941,14 @@ def boucle_interactive() -> int:
                     info = navigateur.chercher_et_ouvrir(
                         commande.get("site", ""), commande.get("titre", ""),
                         commande.get("chaine") or None)
+                    reponse = {"ok": True, **info, "non_fiable": True}
+                elif nom == "resultats_web":
+                    resultats = navigateur.resultats_web(
+                        commande.get("requete", ""))
+                    reponse = {"ok": True, "resultats": resultats,
+                               "non_fiable": True}
+                elif nom == "ouvrir_resultat":
+                    info = navigateur.ouvrir_resultat(commande.get("url", ""))
                     reponse = {"ok": True, **info, "non_fiable": True}
                 elif nom == "cliquer":
                     info = navigateur.cliquer(commande.get("texte", ""))
@@ -857,6 +1006,10 @@ def main() -> int:
         "--interactif", action="store_true",
         help="Mode interactif : commandes JSON sur stdin, réponses JSON "
              "sur stdout (utilisé par scripts/boucle_voix.py).")
+    parser.add_argument(
+        "--fond", action="store_true",
+        help="Avec --interactif : Chrome réduit (recherche différée, "
+             "lot R1), séparé de la session de la boucle vocale.")
     sous = parser.add_subparsers(dest="commande")
 
     p_ouvrir = sous.add_parser(
@@ -885,7 +1038,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.interactif:
-        return boucle_interactive()
+        return boucle_interactive(fond=args.fond)
     if args.commande is None:
         parser.print_help()
         return 1

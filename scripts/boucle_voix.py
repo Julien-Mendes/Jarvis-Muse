@@ -66,6 +66,15 @@ data/hud-state.json, même data/hud-ptt.json).
     turnlog.py du dépôt B) — durées, jetons, coût estimé, noms des
     outils, JAMAIS le contenu des conversations (règle §7).
 
+Lot R1 — Recherche différée (scripts/recherche.py) : « fais-moi une
+recherche sur X », « cherche ça et reviens-moi » (ou l'outil lancer_recherche
+choisi par le modèle) enregistrent une tâche dans data/recherches.json ; un
+travailleur en arrière-plan (son propre Chrome réduit, jamais la session de
+la boucle) fait la recherche, une à la fois. Les recherches terminées sont
+annoncées au prochain moment calme et au lancement ; « où en est ma
+recherche ? » / « lis-moi le résultat » lisent la réponse et ses sources
+directement (jamais redonnées au modèle). Pas de notification app fermée.
+
 Sécurité (docs/regles-securite.md) :
   - Depuis l'étape 5, des données externes sont lues : description d'écran
     (yeux.py) et texte de page (navigateur.py, CLI seulement). Elles sont
@@ -126,6 +135,8 @@ SCRIPT_NAVIGATEUR = RACINE / "scripts" / "navigateur.py"
 # Fonctions pures de navigateur.py (garde-fous du clic, sites de recherche) ;
 # Playwright n'est chargé que dans le processus interactif.
 import navigateur as navigateur_mod  # noqa: E402
+# Lot R1 : recherche différée (file de tâches, travailleur, textes).
+import recherche as recherche_mod  # noqa: E402
 SCRIPT_HUD = RACINE / "scripts" / "hud.py"
 SCRIPT_APP = RACINE / "scripts" / "app.py"
 
@@ -278,7 +289,8 @@ def chemin_journal_jour(jour: datetime | None = None) -> Path:
     return DOSSIER_CONVERSATIONS / f"{ref.strftime('%Y-%m-%d')}.jsonl"
 
 
-def journaliser_echange(texte_utilisateur: str, texte_jarvis: str) -> None:
+def journaliser_echange(texte_utilisateur: str | None,
+                        texte_jarvis: str) -> None:
     """Ajoute un tour au journal du jour (data/conversations/AAAA-MM-JJ.jsonl).
 
     Une ligne JSON par message : {"role": "user"|"jarvis", "texte": ...,
@@ -293,6 +305,9 @@ def journaliser_echange(texte_utilisateur: str, texte_jarvis: str) -> None:
     Julien, pas un journal de télémétrie (voir docs/regles-securite.md
     §7 : les journaux de télémétrie, eux, ne contiennent jamais le
     contenu des conversations).
+
+    `texte_utilisateur` None (lot R1) : message de Jarvis seul — annonce
+    d'une recherche prête, sans phrase de Julien.
     """
     try:
         DOSSIER_CONVERSATIONS.mkdir(parents=True, exist_ok=True)
@@ -303,6 +318,8 @@ def journaliser_echange(texte_utilisateur: str, texte_jarvis: str) -> None:
             json.dumps({"role": "jarvis", "texte": texte_jarvis,
                         "heure": maintenant}, ensure_ascii=False),
         ]
+        if texte_utilisateur is None:
+            lignes = lignes[1:]
         cible = chemin_journal_jour()
         # P1 : la boucle et un tour --texte (autre processus) peuvent écrire
         # en même temps : verrou court (1 s au plus, puis on écrit quand même).
@@ -481,6 +498,10 @@ def prompt_systeme(langue: str = "en") -> str:
             "YouTube précise (titre et chaîne) et cliquer sur un lien par "
             "son texte. Tu ne peux jamais te connecter, acheter, remplir un "
             "formulaire, ni fermer un onglet sans le oui de Julien.\n"
+            "Pour une recherche à rapporter plus tard, ou une question qui "
+            "demande plusieurs sources, lance une recherche en arrière-plan. "
+            "Tu ne peux pas prévenir Julien quand l'application est fermée : "
+            "le résultat est annoncé au prochain lancement ou sur demande.\n"
             f"Nous sommes le {date_heure}."
         )
     date_heure = (f"{JOURS_EN[ref.weekday()]}, {MOIS_EN[ref.month - 1]} "
@@ -500,6 +521,10 @@ def prompt_systeme(langue: str = "en") -> str:
         "In the browser you can open a site, open a specific YouTube video "
         "(title and channel) and click a link by its text. You can never "
         "log in, buy, fill in a form, or close a tab without Julien's yes.\n"
+        "For research to report back on later, or a question that needs "
+        "several sources, start a background search. You cannot notify "
+        "Julien while the app is closed: the result is announced the next "
+        "time it starts, or when he asks.\n"
         f"Today is {date_heure}."
     )
 
@@ -925,6 +950,51 @@ OUTIL_CLIC_GROQ, OUTIL_CLIC_ANTHROPIC = _paire_outil(
 OUTIL_FERMER_GROQ, OUTIL_FERMER_ANTHROPIC = _paire_outil(
     "fermer_onglet", OUTIL_FERMER_DESCRIPTION, OUTIL_FERMER_PARAMETRES)
 
+# Outils lot R1 — recherche différée. lancer_recherche enregistre une tâche
+# (écriture : refusée après une lecture externe, échec fermé) ; lire_recherche
+# lit le résultat à Julien SANS le redonner au modèle (réponse directe, comme
+# chercher_et_ouvrir) : le résultat dérive de pages externes (§1).
+OUTIL_RECHERCHE_DESCRIPTION = (
+    "Lancer une recherche web en arrière-plan : Jarvis lit quelques pages, "
+    "en fait une synthèse avec les sources et la rapporte plus tard. "
+    "Utilise-le quand Julien demande une recherche à rapporter plus tard, ou "
+    "pour une question qui demande plusieurs sources (comparaison, sujet "
+    "récent, avis partagés). Pas pour ouvrir un site."
+)
+OUTIL_RECHERCHE_PARAMETRES = {
+    "type": "object",
+    "properties": {
+        "question": {
+            "type": "string",
+            "description": "La question à rechercher, complète et autonome "
+                           "(ex. « meilleurs vélos électriques 2026 »).",
+        },
+    },
+    "required": ["question"],
+}
+OUTIL_LIRE_RECHERCHE_DESCRIPTION = (
+    "Dire où en est une recherche lancée en arrière-plan, ou en lire le "
+    "résultat avec ses sources. Utilise-le quand Julien demande où en est sa "
+    "recherche ou veut entendre le résultat."
+)
+OUTIL_LIRE_RECHERCHE_PARAMETRES = {
+    "type": "object",
+    "properties": {
+        "sujet": {
+            "type": "string",
+            "description": "Sujet de la recherche, si Julien le précise "
+                           "(sinon vide : la plus récente).",
+        },
+    },
+    "required": [],
+}
+OUTIL_RECHERCHE_GROQ, OUTIL_RECHERCHE_ANTHROPIC = _paire_outil(
+    "lancer_recherche", OUTIL_RECHERCHE_DESCRIPTION,
+    OUTIL_RECHERCHE_PARAMETRES)
+OUTIL_LIRE_RECHERCHE_GROQ, OUTIL_LIRE_RECHERCHE_ANTHROPIC = _paire_outil(
+    "lire_recherche", OUTIL_LIRE_RECHERCHE_DESCRIPTION,
+    OUTIL_LIRE_RECHERCHE_PARAMETRES)
+
 # Descriptions d'outils envoyées au modèle, par langue (F3). Avec un prompt
 # système en anglais, des descriptions françaises mélangent les langues et
 # dégradent la fiabilité des appels d'outils. Les noms d'outils et de
@@ -1005,6 +1075,28 @@ TEXTES_OUTILS_EN = {
             "fenetre": "True to close the whole Chrome window.",
         },
     },
+    "lancer_recherche": {
+        "description": (
+            "Start a web search in the background: Jarvis reads a few pages, "
+            "summarizes them with their sources and reports back later. Use "
+            "it when Julien asks for research to report back on, or for a "
+            "question that needs several sources (comparison, recent topic, "
+            "mixed opinions). Not for opening a site."),
+        "parametres": {
+            "question": "The question to research, complete and "
+                        "self-contained (e.g. \"best e-bikes 2026\").",
+        },
+    },
+    "lire_recherche": {
+        "description": (
+            "Say how a background search is going, or read its result with "
+            "its sources. Use it when Julien asks about his research or "
+            "wants to hear the result."),
+        "parametres": {
+            "sujet": "Topic of the research, if Julien says it (otherwise "
+                     "empty: the most recent one).",
+        },
+    },
 }
 
 
@@ -1033,14 +1125,18 @@ def outils_pour(fournisseur: str, langue: str) -> list:
               "ouvrir_navigateur": OUTIL_NAVIGATEUR_GROQ,
               "chercher_et_ouvrir": OUTIL_VIDEO_GROQ,
               "cliquer": OUTIL_CLIC_GROQ,
-              "fermer_onglet": OUTIL_FERMER_GROQ}
+              "fermer_onglet": OUTIL_FERMER_GROQ,
+              "lancer_recherche": OUTIL_RECHERCHE_GROQ,
+              "lire_recherche": OUTIL_LIRE_RECHERCHE_GROQ}
              if forme == "groq" else
              {"regler_minuteur": OUTIL_MINUTEUR_ANTHROPIC,
               "decrire_ecran": OUTIL_ECRAN_ANTHROPIC,
               "ouvrir_navigateur": OUTIL_NAVIGATEUR_ANTHROPIC,
               "chercher_et_ouvrir": OUTIL_VIDEO_ANTHROPIC,
               "cliquer": OUTIL_CLIC_ANTHROPIC,
-              "fermer_onglet": OUTIL_FERMER_ANTHROPIC})
+              "fermer_onglet": OUTIL_FERMER_ANTHROPIC,
+              "lancer_recherche": OUTIL_RECHERCHE_ANTHROPIC,
+              "lire_recherche": OUTIL_LIRE_RECHERCHE_ANTHROPIC})
     if langue == "fr":
         return list(bases.values())
     return [_outil_en(base, nom, forme) for nom, base in bases.items()]
@@ -1138,6 +1234,18 @@ class CerveauGroq:
                                   or 0),
                 }}
 
+    def completer(self, messages: list, delai: float | None = None,
+                  max_tokens: int | None = None) -> str:
+        """Un appel sans outils (lot R1 : synthèse d'une recherche)."""
+        client = (self.client.with_options(timeout=delai) if delai
+                  else self.client)
+        extra = {"reasoning_effort": self.effort} if self.effort else {}
+        reponse = client.chat.completions.create(
+            model=self.modele, messages=messages,
+            max_tokens=max_tokens or max(self.max_tokens, 900),
+            temperature=0.3, extra_body=extra or None)
+        return reponse.choices[0].message.content or ""
+
     def message_assistant(self, reponse: dict) -> dict:
         """Message assistant à réinjecter dans l'historique du tour."""
         appels = [{
@@ -1205,6 +1313,22 @@ class CerveauAnthropic:
                     "entree": int(getattr(usage, "input_tokens", 0) or 0),
                     "sortie": int(getattr(usage, "output_tokens", 0) or 0),
                 }}
+
+    def completer(self, messages: list, delai: float | None = None,
+                  max_tokens: int | None = None) -> str:
+        """Un appel sans outils (lot R1 : synthèse d'une recherche)."""
+        client = (self.client.with_options(timeout=delai) if delai
+                  else self.client)
+        systeme = next(
+            (m["content"] for m in messages if m["role"] == "system"), "")
+        conversation = [m for m in messages if m["role"] != "system"]
+        extra = ({"output_config": {"effort": self.effort}}
+                 if self.effort else {})
+        reponse = client.messages.create(
+            model=self.modele, max_tokens=max_tokens or max(self.max_tokens,
+                                                            900),
+            system=systeme, messages=conversation, extra_body=extra or None)
+        return "".join(b.text for b in reponse.content if b.type == "text")
 
     def message_assistant(self, reponse: dict) -> dict:
         return {"role": "assistant", "content": reponse["_contenu_brut"]}
@@ -1401,7 +1525,8 @@ MESSAGES = {
         "outil_inconnu": (
             "Outil inconnu : je sais régler des minuteurs, "
             "regarder l'écran (avec confirmation), ouvrir un site, ouvrir "
-            "une vidéo YouTube précise et cliquer sur un lien."),
+            "une vidéo YouTube précise, cliquer sur un lien et lancer une "
+            "recherche en arrière-plan."),
         "outil_clic_ok": ("Clic fait sur « {texte} » dans l'onglet actuel. "
                           "Dis-le à Julien en une phrase."),
         "outil_clic_refuse": (
@@ -1483,7 +1608,7 @@ MESSAGES = {
         "outil_inconnu": (
             "Unknown tool: I can set timers, look at the screen "
             "(with confirmation), open a site, open a specific YouTube "
-            "video and click a link."),
+            "video, click a link and start a background search."),
         "outil_clic_ok": ("Clicked \"{texte}\" in the current tab. Tell "
                           "Julien in one sentence."),
         "outil_clic_refuse": (
@@ -1954,11 +2079,14 @@ class SessionNavigateur:
     (webbrowser.open) et le dit.
     """
 
-    def __init__(self):
+    def __init__(self, fond: bool = False):
         self.processus = None
         self._file_reponses = None
         self._a_demarre = False
         self._redemarre = False
+        # Lot R1 : `fond` = Chrome réduit, processus et profil séparés,
+        # pour la recherche différée (jamais la session de la boucle).
+        self.fond = fond
 
     def active(self) -> bool:
         """Vrai si le processus du navigateur tourne."""
@@ -1973,7 +2101,8 @@ class SessionNavigateur:
         relance = self._a_demarre
         try:
             self.processus = subprocess.Popen(
-                [sys.executable, str(SCRIPT_NAVIGATEUR), "--interactif"],
+                [sys.executable, str(SCRIPT_NAVIGATEUR), "--interactif"]
+                + (["--fond"] if self.fond else []),
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL, text=True, bufsize=1)
         except OSError:
@@ -2280,6 +2409,126 @@ def detecter_fermeture(texte: str):
 
 
 # ---------------------------------------------------------------------------
+# Recherche différée (lot R1) — voir scripts/recherche.py
+# ---------------------------------------------------------------------------
+
+def chemin_recherches(config: dict) -> Path:
+    """data/recherches.json, ou config["fichier_recherches"] (tests)."""
+    return Path(config.get("fichier_recherches")
+                or recherche_mod.chemin_donnees_defaut())
+
+
+def _derniere_phrase_utilisateur(historique: list) -> str:
+    """Dernière phrase de Julien (pour « cherche ça et reviens-moi »)."""
+    for message in reversed(historique or []):
+        if (message.get("role") == "user"
+                and isinstance(message.get("content"), str)
+                and message["content"].strip()):
+            return message["content"].strip()
+    return ""
+
+
+def executer_lancement_recherche(demande: dict, historique: list,
+                                 config: dict, travailleur=None) -> dict:
+    """Enregistre une recherche et retourne la confirmation à dire.
+
+    Retour : {"texte": phrase, "historique": repère pour le modèle}.
+    `demande` : {"sujet": str ("" = « ça » : la phrase précédente de Julien),
+    "notifier": bool}. Sans travailleur (mode --texte), la tâche est gardée
+    et faite au prochain lancement de la boucle — on le dit.
+    """
+    langue = str(config["langue"])
+    question = (demande.get("sujet") or "").strip()
+    if not question:
+        question = _derniere_phrase_utilisateur(historique)
+    if not question:
+        return {"texte": recherche_mod.texte(langue, "manque_sujet")}
+    chemin = chemin_recherches(config)
+    try:
+        ajout = recherche_mod.ajouter(chemin, question, langue)
+    except recherche_mod.FilePleine:
+        return {"texte": recherche_mod.texte(
+            langue, "file_pleine", n=recherche_mod.MAX_EN_FILE)}
+    except (ValueError, OSError) as erreur:
+        print(f"Recherche différée : {erreur}", file=sys.stderr)
+        return {"texte": recherche_mod.texte(langue, "manque_sujet")}
+    q = recherche_mod.texte_parle(ajout["tache"]["question"], 100)
+    if ajout["doublon"]:
+        phrase = recherche_mod.texte(langue, "doublon", q=q)
+    elif travailleur is None:
+        phrase = recherche_mod.texte(langue, "lancee_differee", q=q)
+    elif ajout["position"] > 0:
+        phrase = recherche_mod.texte(langue, "lancee_file", q=q,
+                                     n=ajout["position"])
+    else:
+        phrase = recherche_mod.texte(langue, "lancee", q=q)
+    if demande.get("notifier"):
+        phrase += " " + recherche_mod.texte(langue, "notification")
+    if travailleur is not None:
+        travailleur.signaler()
+    return {"texte": phrase,
+            "historique": recherche_mod.texte(langue, "historique_lancee", q=q)}
+
+
+def executer_suivi_recherche(demande: dict, config: dict) -> dict:
+    """« Où en est ma recherche ? » / « lis-moi le résultat ».
+
+    Retour : {"texte", "externe", "historique"}. Un résultat prêt est lu
+    (réponse + sources) DIRECTEMENT par le code : il dérive de pages
+    externes, il ne repasse jamais par le modèle et l'historique n'en garde
+    qu'un repère (§1, §2).
+    """
+    langue = str(config["langue"])
+    chemin = chemin_recherches(config)
+    tache = recherche_mod.choisir(recherche_mod.lister(chemin),
+                                  demande.get("sujet"))
+    if tache is None:
+        return {"texte": recherche_mod.texte(langue, "aucune"),
+                "externe": False}
+    q = recherche_mod.texte_parle(tache["question"], 100)
+    if tache["statut"] != "prete":
+        if tache["statut"] == "echec":
+            recherche_mod.marquer_annoncees(chemin, [tache["id"]])
+        return {"texte": recherche_mod.formater_etat(tache, langue),
+                "externe": False}
+    recherche_mod.marquer_lue(chemin, tache["id"])
+    return {"texte": recherche_mod.formater_lecture(tache, langue),
+            "externe": True,
+            "historique": recherche_mod.texte(langue, "historique_lecture",
+                                              q=q)}
+
+
+def fabriquer_synthetiseur(config: dict):
+    """Fonction synthetiser(messages, delai) -> str pour le travailleur.
+
+    Le travailleur a SON cerveau (créé au premier besoin, dans son fil),
+    distinct de celui de la boucle ; repli Groq -> Haiku comme un tour
+    normal. Aucun outil n'est déclaré à cet appel.
+    """
+    etat = {"cerveau": None}
+    repli = Repli(config)
+
+    def synthetiser(messages: list, delai: float) -> str:
+        if etat["cerveau"] is None:
+            try:
+                etat["cerveau"] = creer_cerveau(config)
+            except SystemExit:  # clé ou module absent : pas de cerveau.
+                raise RuntimeError("cerveau indisponible")
+        delai = max(1.0, min(float(delai), 120.0))
+        try:
+            return etat["cerveau"].completer(messages, delai=delai)
+        except Exception as erreur:
+            if classer_erreur_cerveau(erreur) not in CATEGORIES_REPLI:
+                raise
+            secours = repli.obtenir()
+            if secours is None:
+                raise
+            return secours.completer(messages, delai=delai)
+
+    return synthetiser
+
+
+# ---------------------------------------------------------------------------
 # Traitement d'un tour : transcription -> réponse
 # ---------------------------------------------------------------------------
 
@@ -2306,7 +2555,8 @@ OUTILS_SANS_ECRITURE = {"decrire_ecran", "ouvrir_navigateur"}
 def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
                 donnees: Path | None, confirmation: dict | None = None,
                 session_navigateur=None, mesures: dict | None = None,
-                etat_tour: dict | None = None, repli: Repli | None = None) -> str:
+                etat_tour: dict | None = None, repli: Repli | None = None,
+                travailleur_recherche=None) -> str:
     """Traite une phrase entendue et retourne la réponse à lire à voix haute.
 
     `confirmation` est un dict partagé entre les tours ({"outil": ...,
@@ -2327,6 +2577,10 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
     `repli` (optionnel, lot robustesse) : cerveau de secours utilisé quand le
     principal échoue par limite, délai ou panne — seulement si aucun outil
     n'a encore été exécuté dans le tour (on ne règle jamais deux minuteurs).
+
+    `travailleur_recherche` (lot R1) : travailleur de recherche différée à
+    réveiller quand une recherche est lancée ; None en mode --texte (la
+    tâche est gardée et faite au prochain lancement).
     """
     if mesures is not None:
         mesures.setdefault("llm_s", 0.0)
@@ -2394,6 +2648,27 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
             confirmation["arme_a"] = time.monotonic()
         return msg(langue, "fermer_demande_fenetre"
                    if demande_fermeture["fenetre"] else "fermer_demande")
+    # Lot R1 — recherche différée : lancement, suivi, demande de notification.
+    demande_recherche = recherche_mod.detecter_lancement(transcription)
+    if demande_recherche is not None:
+        _outil("lancer_recherche")
+        lancement = executer_lancement_recherche(
+            demande_recherche, historique, config, travailleur_recherche)
+        if lancement.get("historique"):
+            etat_tour["historique"] = lancement["historique"]
+        return lancement["texte"]
+    demande_suivi = recherche_mod.detecter_suivi(transcription)
+    if demande_suivi is not None:
+        _outil("lire_recherche")
+        suivi = executer_suivi_recherche(demande_suivi, config)
+        if suivi.get("externe"):
+            etat_tour["externe"] = True
+        if suivi.get("historique"):
+            etat_tour["historique"] = suivi["historique"]
+        return suivi["texte"]
+    if recherche_mod.detecter_notification(transcription):
+        # Limite dite clairement : pas de notification app fermée.
+        return recherche_mod.texte(langue, "notification")
     demande_navigateur = detecter_ouverture(transcription)
     if demande_navigateur is not None:
         _outil("ouvrir_navigateur")
@@ -2483,6 +2758,27 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
                     if video.get("historique"):
                         etat_tour["historique"] = video["historique"]
                     return video["texte"]
+                elif appel["nom"] == "lancer_recherche":
+                    # Réponse directe : la confirmation est dite telle
+                    # quelle (elle ne contient que les mots de Julien).
+                    lancement = executer_lancement_recherche(
+                        {"sujet": args.get("question", "") or "",
+                         "notifier": recherche_mod.detecter_notification(
+                             transcription)},
+                        historique, config, travailleur_recherche)
+                    if lancement.get("historique"):
+                        etat_tour["historique"] = lancement["historique"]
+                    return lancement["texte"]
+                elif appel["nom"] == "lire_recherche":
+                    # Réponse directe : le résultat (dérivé de pages
+                    # externes, §1) ne repasse jamais par le modèle.
+                    suivi = executer_suivi_recherche(
+                        {"sujet": args.get("sujet", "") or None}, config)
+                    if suivi.get("externe"):
+                        etat_tour["externe"] = True
+                    if suivi.get("historique"):
+                        etat_tour["historique"] = suivi["historique"]
+                    return suivi["texte"]
                 elif appel["nom"] == "cliquer":
                     resultat_outil = executer_clic(
                         args.get("texte", "") or "", session_navigateur,
@@ -2716,6 +3012,9 @@ def main() -> int:
         if (detecter_minuteur(args.texte) is None
                 and detecter_ecran(args.texte) is None
                 and detecter_fermeture(args.texte) is None
+                and recherche_mod.detecter_lancement(args.texte) is None
+                and recherche_mod.detecter_suivi(args.texte) is None
+                and not recherche_mod.detecter_notification(args.texte)
                 and detecter_ouverture(args.texte) is None):
             cerveau = creer_cerveau(config)
         # En mode --texte (un seul tour), une demande d'écran ne peut pas
@@ -2782,6 +3081,28 @@ def main() -> int:
     # usage, fermée à la sortie de la boucle).
     confirmation_en_attente: dict = {}
     session_navigateur = SessionNavigateur()
+
+    # Lot R1 — recherche différée. D'abord les tâches interrompues par une
+    # fermeture (reprises ou échouées proprement), puis le travailleur : son
+    # propre Chrome réduit (jamais session_navigateur) et son cerveau.
+    # Les recherches terminées sont annoncées au prochain moment calme ; au
+    # démarrage, celles déjà prêtes (ou en échec) et pas encore annoncées.
+    fichier_recherches = chemin_recherches(config)
+    import queue as queue_mod
+    file_annonces = queue_mod.Queue()
+    try:
+        reprise = recherche_mod.reprendre_au_demarrage(fichier_recherches)
+        if reprise["reprises"] or reprise["echecs"]:
+            print(f"Recherches interrompues : {len(reprise['reprises'])} "
+                  f"reprise(s), {len(reprise['echecs'])} en échec.")
+    except OSError as erreur:
+        print(f"Recherches : {erreur}", file=sys.stderr)
+    travailleur_recherche = recherche_mod.Travailleur(
+        fichier_recherches, lambda: SessionNavigateur(fond=True),
+        fabriquer_synthetiseur(config),
+        sur_fin=lambda _tache: file_annonces.put(True))
+    travailleur_recherche.demarrer()
+    file_annonces.put(True)  # annonces du démarrage.
 
     print("Boucle vocale Jarvis — prête.")
     print("Maintenez F9 pour parler, relâchez pour envoyer.")
@@ -2866,6 +3187,7 @@ def main() -> int:
             # l'application (data/texte-demande.json — étape 7.1).
             demarrage_hud = False
             texte_demande = None
+            annonce = False
             while True:
                 if evenement_presse.wait(timeout=0.2):
                     evenement_presse.clear()
@@ -2876,7 +3198,36 @@ def main() -> int:
                 texte_demande = lire_demande_texte()
                 if texte_demande is not None:
                     break
+                # Lot R1 : une recherche s'est terminée (ou démarrage) et
+                # Jarvis est au repos : on l'annonce maintenant.
+                if not file_annonces.empty() and lire_phase() == "repos":
+                    annonce = True
+                    break
             if lire_phase() != "repos":
+                continue
+            if annonce:
+                while not file_annonces.empty():
+                    file_annonces.get_nowait()
+                try:
+                    a_dire = recherche_mod.a_annoncer(fichier_recherches)
+                    texte_annonce = recherche_mod.formater_annonce(
+                        a_dire, str(config["langue"]))
+                    recherche_mod.marquer_annoncees(
+                        fichier_recherches, [t["id"] for t in a_dire])
+                except OSError as erreur:
+                    print(f"Recherches : {erreur}", file=sys.stderr)
+                    texte_annonce = ""
+                if texte_annonce:
+                    journaliser_echange(None, texte_annonce)
+                    evenement_interruption.clear()
+                    changer_phase("parle")
+                    ecrire_etat_hud("reponse")
+                    dire(texte_annonce, str(config["langue"]),
+                         evenement_interruption,
+                         vitesse=float(config["vitesse_voix"]),
+                         voix=voix_residente)
+                    ecrire_etat_hud("repos")
+                    changer_phase("repos")
                 continue
             # Bilan du tour (journal des tours, étape 7.1) ; t_liberation
             # est le point de départ des durées « premier audio » et
@@ -2941,7 +3292,8 @@ def main() -> int:
                                    historique, args.donnees,
                                    confirmation_en_attente,
                                    session_navigateur, mesures=bilan,
-                                   etat_tour=etat_tour, repli=repli_cerveau)
+                                   etat_tour=etat_tour, repli=repli_cerveau,
+                                   travailleur_recherche=travailleur_recherche)
             journaliser_echange(transcription, reponse)
             historique.append({"role": "user", "content": transcription})
             # Règles §1/§2 : un texte venu de l'extérieur (description
@@ -2979,6 +3331,9 @@ def main() -> int:
         print("\nAu revoir, Julien.")
     finally:
         ecouteur.stop()
+        # Une recherche en cours reste « en_cours » dans le fichier : elle
+        # sera reprise (ou marquée en échec) au prochain lancement.
+        travailleur_recherche.arreter()
         session_navigateur.fermer()
     return 0
 

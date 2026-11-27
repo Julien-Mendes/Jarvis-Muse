@@ -16,6 +16,9 @@ Ce que montre la fenêtre :
     étape 7.1 ; ancien data/conversation.jsonl lu en repli).
   - Panneau minuteurs : liste lue dans data/timers.json (lecture seule),
     avec comptes à rebours.
+  - Panneau recherches (lot R1) : recherches différées lues dans
+    data/recherches.json (lecture seule) avec leur statut ; un clic sur
+    une recherche ouvre sa réponse et ses sources (titres + URL).
   - Bouton micro à maintenir enfoncé = push-to-talk (même mécanisme que
     le HUD : data/hud-ptt.json) ; bouton « Interrompre » pour couper la
     réponse en cours (comme F9 pendant une réponse).
@@ -49,8 +52,9 @@ Usage :
 
 Sécurité (docs/regles-securite.md) : aucune donnée sensible affichée —
 pas de capture d'écran, pas de texte de page, pas de courriel ; seuls
-l'état, l'heure, les minuteurs et la conversation avec Jarvis lui-même
-sont montrés. Le journal de conversation est local uniquement (data/,
+l'état, l'heure, les minuteurs, les synthèses de recherche (rédigées par
+Jarvis, jamais le texte brut des pages) et la conversation avec Jarvis
+lui-même sont montrés. Le journal de conversation est local uniquement (data/,
 gitignoré) : c'est l'historique affiché sur la machine de Julien, pas
 un journal de télémétrie (§7).
 """
@@ -71,6 +75,7 @@ if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import config_jarvis  # noqa: E402
+import recherche as recherche_mod  # noqa: E402 — lot R1 (lecture seule).
 
 # Fuseau horaire : [general] fuseau_horaire de la configuration (K1).
 FUSEAU = config_jarvis.fuseau()
@@ -79,6 +84,7 @@ RACINE = Path(__file__).resolve().parent.parent
 FICHIER_ETAT = RACINE / "data" / "hud-state.json"
 FICHIER_PTT = RACINE / "data" / "hud-ptt.json"
 FICHIER_MINUTEURS = RACINE / "data" / "timers.json"
+FICHIER_RECHERCHES = RACINE / "data" / "recherches.json"
 DOSSIER_CONVERSATIONS = RACINE / "data" / "conversations"
 # Ancien journal unique (étape 7) : plus écrit par la boucle, lu en repli
 # si le journal du jour n'existe pas encore.
@@ -338,6 +344,12 @@ TEXTES = {
         "aucun_minuteur": "Aucun minuteur en cours.",
         "minuteur_reste": "• {quoi} : dans {duree}",
         "minuteur_echu": "• {quoi} : échue",
+        "recherches": "Recherches",
+        "aucune_recherche": "Aucune recherche.",
+        "recherche_fenetre": "Recherche — Jarvis",
+        "recherche_sources": "Sources",
+        "recherche_attente": "Pas encore de réponse : la recherche est {statut}.",
+        "fermer": "Fermer",
         "echue": "échue",
         "menu_fichier": "Fichier",
         "menu_historique": "Historique…",
@@ -372,6 +384,12 @@ TEXTES = {
         "aucun_minuteur": "No timers running.",
         "minuteur_reste": "• {quoi}: in {duree}",
         "minuteur_echu": "• {quoi}: expired",
+        "recherches": "Research",
+        "aucune_recherche": "No research yet.",
+        "recherche_fenetre": "Research — Jarvis",
+        "recherche_sources": "Sources",
+        "recherche_attente": "No answer yet: the research is {statut}.",
+        "fermer": "Close",
         "echue": "expired",
         "menu_fichier": "File",
         "menu_historique": "History…",
@@ -512,6 +530,36 @@ def charger_minuteurs(chemin: Path = FICHIER_MINUTEURS) -> list:
         })
     resultat.sort(key=lambda m: m["due"])
     return resultat
+
+
+MAX_RECHERCHES_PANNEAU = 6
+
+
+def charger_recherches(chemin: Path = FICHIER_RECHERCHES) -> list:
+    """Lit data/recherches.json (lecture seule) ; la plus récente d'abord.
+
+    Fichier absent ou illisible : liste vide (l'application ne le répare
+    jamais et ne le réécrit jamais — c'est la boucle qui en a la charge).
+    """
+    try:
+        donnees = json.loads(Path(chemin).read_text(encoding="utf-8"))
+        taches = donnees.get("recherches", [])
+    except (OSError, ValueError, AttributeError):
+        return []
+    propres = [t for t in taches if isinstance(t, dict)
+               and isinstance(t.get("id"), int)
+               and t.get("statut") in recherche_mod.STATUTS]
+    return sorted(propres, key=lambda t: -t["id"])
+
+
+def formater_recherches(recherches: list, langue: str = "fr") -> tuple:
+    """Lignes « • question — statut » du panneau Recherches."""
+    lignes = []
+    for tache in recherches[:MAX_RECHERCHES_PANNEAU]:
+        question = recherche_mod.texte_parle(tache.get("question", ""), 40)
+        lignes.append(f"• {question} — "
+                      f"{recherche_mod.etiquette_statut(tache, langue)}")
+    return tuple(lignes) if lignes else (_texte(langue, "aucune_recherche"),)
 
 
 def formater_compte_a_rebours(secondes: float, langue: str = "fr") -> str:
@@ -876,6 +924,7 @@ class Application:
         self.etat_affiche = "arrete"
         self._entrees_affichees: list = []
         self._texte_minuteurs: tuple = ()
+        self._cle_recherches: tuple = ()
         self._micro_enfonce = False
         self._etiquettes_bulles: list = []
         self._apres_redimensionnement = None
@@ -972,8 +1021,8 @@ class Application:
             self.zone_conversation._scrollbar.configure(width=8)
         except Exception:
             pass
-        self.zone_conversation.grid(row=0, column=0, sticky="nsew",
-                                    padx=(8, 0), pady=8)
+        self.zone_conversation.grid(row=0, column=0, rowspan=2,
+                                    sticky="nsew", padx=(8, 0), pady=8)
         # add="+" : CTkScrollableFrame met à jour sa zone de défilement
         # (scrollregion) dans sa propre liaison <Configure> ; sans add="+",
         # ce bind la REMPLACE et la barre de défilement ne suit plus le
@@ -983,8 +1032,8 @@ class Application:
 
         self.panneau_minuteurs = ctk.CTkFrame(
             self.centre, fg_color=COULEUR_PANNEAU, corner_radius=12)
-        self.panneau_minuteurs.grid(row=0, column=1, sticky="ns",
-                                    padx=8, pady=8)
+        self.panneau_minuteurs.grid(row=0, column=1, sticky="new",
+                                    padx=8, pady=(8, 4))
         self.panneau_minuteurs.configure(width=230)
         self.titre_minuteurs = ctk.CTkLabel(
             self.panneau_minuteurs, text=self.t("minuteurs"),
@@ -993,6 +1042,21 @@ class Application:
         self.conteneur_minuteurs = ctk.CTkFrame(
             self.panneau_minuteurs, fg_color="transparent")
         self.conteneur_minuteurs.pack(fill="x", padx=4, pady=(0, 10))
+
+        # Panneau Recherches (lot R1), sous les minuteurs : lecture seule.
+        self.centre.grid_rowconfigure(1, weight=1)
+        self.panneau_recherches = ctk.CTkFrame(
+            self.centre, fg_color=COULEUR_PANNEAU, corner_radius=12)
+        self.panneau_recherches.grid(row=1, column=1, sticky="new",
+                                     padx=8, pady=(4, 8))
+        self.panneau_recherches.configure(width=230)
+        self.titre_recherches = ctk.CTkLabel(
+            self.panneau_recherches, text=self.t("recherches"),
+            font=_police(14, True), text_color=COULEUR_TEXTE, anchor="w")
+        self.titre_recherches.pack(fill="x", padx=12, pady=(10, 2))
+        self.conteneur_recherches = ctk.CTkFrame(
+            self.panneau_recherches, fg_color="transparent")
+        self.conteneur_recherches.pack(fill="x", padx=4, pady=(0, 10))
 
         # -- Barre du bas : micro + interruption ------------------------
         self.barre_bas = ctk.CTkFrame(
@@ -1060,6 +1124,7 @@ class Application:
         seuls au prochain passage de rafraichir()."""
         def vider_minuteurs():
             self._texte_minuteurs = ()  # force la reconstruction du panneau
+            self._cle_recherches = ()
 
         def message_vide():
             if self._message_vide is not None:
@@ -1075,6 +1140,8 @@ class Application:
             lambda: self._menu_fichier.entryconfigure(
                 3, label=self.t("menu_quitter")),
             lambda: self.titre_minuteurs.configure(text=self.t("minuteurs")),
+            lambda: self.titre_recherches.configure(
+                text=self.t("recherches")),
             lambda: self.bouton_interrompre.configure(
                 text=self.t("interrompre")),
             lambda: self.texte_astuce.configure(text=self.t("astuce")),
@@ -1301,6 +1368,81 @@ class Application:
                 self.conteneur_minuteurs, text=ligne, font=_police(12),
                 text_color=COULEUR_TEXTE, anchor="w",
                 justify="left").pack(fill="x", padx=8, pady=2)
+
+    # -- Recherches (lot R1) -------------------------------------------
+
+    def _rafraichir_recherches(self, recherches: list) -> None:
+        """Reconstruit le panneau Recherches seulement s'il a changé."""
+        lignes = formater_recherches(recherches, self.langue)
+        cle = (lignes, tuple((t.get("id"), t.get("statut"))
+                             for t in recherches[:MAX_RECHERCHES_PANNEAU]))
+        if cle == self._cle_recherches:
+            return
+        self._cle_recherches = cle
+        for enfant in self.conteneur_recherches.winfo_children():
+            enfant.destroy()
+        if not recherches:
+            ctk.CTkLabel(
+                self.conteneur_recherches, text=lignes[0], font=_police(12),
+                text_color=COULEUR_TEXTE_FAIBLE, anchor="w",
+                justify="left").pack(fill="x", padx=8, pady=2)
+            return
+        for ligne, tache in zip(lignes, recherches):
+            ctk.CTkButton(
+                self.conteneur_recherches, text=ligne, font=_police(12),
+                fg_color="transparent", hover_color=COULEUR_SURVOL_LISTE,
+                text_color=COULEUR_TEXTE, anchor="w", height=26,
+                command=lambda t=tache: self.ouvrir_recherche(t)
+            ).pack(fill="x", padx=4, pady=1)
+
+    def ouvrir_recherche(self, tache: dict) -> None:
+        """Fenêtre de lecture d'une recherche : question, statut, réponse
+        (synthèse rédigée par Jarvis) et sources (titres + URL)."""
+        fenetre = ctk.CTkToplevel(self.fenetre)
+        _fond_de_fenetre(fenetre)
+        fenetre.title(self.t("recherche_fenetre"))
+        fenetre.geometry("560x460")
+        zone = ctk.CTkScrollableFrame(
+            fenetre, fg_color=COULEUR_FOND, corner_radius=0,
+            scrollbar_button_color=COULEUR_BARRE_DEFILEMENT)
+        zone.pack(fill="both", expand=True, padx=10, pady=(10, 4))
+        statut = recherche_mod.etiquette_statut(tache, self.langue)
+        ctk.CTkLabel(zone, text=str(tache.get("question", "")),
+                     font=_police(15, True), text_color=COULEUR_TEXTE,
+                     anchor="w", justify="left", wraplength=500
+                     ).pack(fill="x", padx=6, pady=(4, 2))
+        ctk.CTkLabel(zone, text=statut, font=_police(12),
+                     text_color=COULEUR_TEXTE_FAIBLE, anchor="w"
+                     ).pack(fill="x", padx=6, pady=(0, 8))
+        if tache.get("statut") == "prete":
+            corps = str(tache.get("reponse", ""))
+        elif tache.get("statut") == "echec":
+            corps = recherche_mod.raison(self.langue,
+                                         str(tache.get("raison", "")))
+        else:
+            corps = self.t("recherche_attente").format(statut=statut)
+        ctk.CTkLabel(zone, text=corps, font=_police(13),
+                     text_color=COULEUR_TEXTE, anchor="w", justify="left",
+                     wraplength=500).pack(fill="x", padx=6, pady=(0, 8))
+        sources = [s for s in tache.get("sources", []) if isinstance(s, dict)]
+        if sources:
+            ctk.CTkLabel(zone, text=self.t("recherche_sources"),
+                         font=_police(13, True), text_color=COULEUR_TEXTE,
+                         anchor="w").pack(fill="x", padx=6, pady=(4, 2))
+            for source in sources:
+                ctk.CTkLabel(
+                    zone, text=(
+                        "• " + recherche_mod.texte_parle(source.get("titre"),
+                                                         120)
+                        + "\n  " + str(source.get("url", ""))[:300]),
+                    font=_police(12), text_color=COULEUR_TEXTE_FAIBLE,
+                    anchor="w", justify="left", wraplength=500
+                ).pack(fill="x", padx=6, pady=2)
+        ctk.CTkButton(
+            fenetre, text=self.t("fermer"), font=_police(13),
+            fg_color=COULEUR_ACCENT, hover_color=COULEUR_ACCENT_SURVOL,
+            text_color=COULEUR_TEXTE_SUR_ACCENT, corner_radius=18, height=34,
+            command=fenetre.destroy).pack(pady=(0, 10))
 
     # -- Micro : push-to-talk et interruption --------------------------
 
@@ -1567,6 +1709,7 @@ class Application:
                 self.langue = etat["langue"]
                 self._appliquer_langue()
             minuteurs = charger_minuteurs()
+            recherches = charger_recherches()
             entrees = lire_conversation()
 
             # État + détail.
@@ -1599,6 +1742,7 @@ class Application:
 
             # Minuteurs.
             self._rafraichir_minuteurs(minuteurs, maintenant)
+            self._rafraichir_recherches(recherches)
 
             # Conversation : ajouts, ou reconstruction si le journal a
             # raccourci (changement de jour : nouveau fichier).
