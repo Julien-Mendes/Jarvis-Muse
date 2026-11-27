@@ -92,28 +92,17 @@ FRAICHEUR_PTT = 2.0  # secondes : un fichier PTT plus vieux est périmé.
 # ---------------------------------------------------------------------------
 
 def charger_config_hud(racine: Path) -> dict:
-    """Lit config.toml [hud], sinon config.example.toml, sinon défauts."""
+    """Lit [hud] avec config_jarvis (config.example.toml < config.toml <
+    config.local.toml, comme tous les scripts), sinon défauts."""
     config = dict(DEFAUTS)
-    fichier = racine / "config" / "config.toml"
-    if not fichier.exists():
-        fichier = racine / "config" / "config.example.toml"
-    if fichier.exists():
-        try:
-            import tomllib
-        except ImportError:
-            try:
-                import tomli as tomllib
-            except ImportError:
-                tomllib = None
-        if tomllib is not None:
-            try:
-                donnees = tomllib.loads(fichier.read_text(encoding="utf-8"))
-                hud = donnees.get("hud", {})
-                for cle in DEFAUTS:
-                    if cle in hud:
-                        config[cle] = hud[cle]
-            except (ValueError, OSError):
-                pass
+    try:
+        hud = config_jarvis.section(
+            config_jarvis.charger_donnees(racine / "config"), "hud")
+    except Exception:  # Une config cassée ne doit jamais empêcher le lancement.
+        hud = {}
+    for cle in DEFAUTS:
+        if cle in hud:
+            config[cle] = hud[cle]
     if str(config.get("position", "")) not in (
             "bas-droite", "bas-gauche", "haut-droite", "haut-gauche"):
         config["position"] = "bas-droite"

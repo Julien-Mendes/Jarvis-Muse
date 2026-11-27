@@ -33,15 +33,12 @@ def ok(condition: bool, nom: str) -> None:
 # phrase -> (minutes, heure fixe, étiquette)
 CAS_MINUTEUR = {
     "Set a timer for 5 minutes.": (5.0, None, ""),
-    "Set a timer for a minute.": (1.0, None, ""),
-    "set a timer for an hour": (60.0, None, ""),
     "set a timer for five minutes for the pasta": (5.0, None, "the pasta"),
     "Set a timer for twenty-five minutes": (25.0, None, ""),
-    "timer for an hour": (60.0, None, ""),
     "set a timer for half an hour": (30.0, None, ""),
     "Set a 20 minute timer": (20.0, None, ""),
     "set a timer for 90 seconds": (1.5, None, ""),
-    "Remind me in an hour to call mom.": (60.0, None, "call mom"),
+    "Remind me in one hour to call mom.": (60.0, None, "call mom"),
     "Remind me at 6:30 p.m. to take out the trash": (None, "18:30", "take out the trash"),
     "remind me at 12 am": (None, "00:00", ""),
     "remind me at 18:30": (None, "18:30", ""),
@@ -58,7 +55,10 @@ for phrase in ("remind me at 6", "remind me at 6:30", "set a reminder for 5 minu
                "what's the weather", "how long is a minute",
                # durées composées : jamais tronquées en silence
                "set a timer for a minute and a half", "timer for 5 minutes and 30 seconds",
-               "timer for an hour and a half", "set an extra minute timer"):
+               "timer for an hour and a half", "set an extra minute timer",
+               # « a » / « an » ne sont plus des nombres : le cerveau décide.
+               "Set a timer for a minute.", "set a timer for an hour",
+               "Remind me in an hour to call mom.", "wait a minute timer"):
     ok(bv.detecter_minuteur(phrase) is None, f"minuteur doit être None : {phrase!r}")
 
 # --- Écran et navigateur ----------------------------------------------------

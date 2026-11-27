@@ -97,8 +97,9 @@ QUESTIONS = {
     "en": "\nJulien's question: {question} "
           "Answer this question in 2 to 3 sentences, in English.",
 }
-# Conservé pour compatibilité (anciens appels) : l'invite française.
-PROMPT_DEFAUT = PROMPTS["fr"]
+# Conservé pour compatibilité (anciens appels) : l'invite dans la langue
+# configurée ([general] langue), plus le français imposé.
+PROMPT_DEFAUT = PROMPTS.get(config_jarvis.langue(), PROMPTS["en"])
 
 
 def construire_prompt(langue: str, question: str | None = None) -> str:
@@ -464,21 +465,67 @@ def creer_vision(config: dict):
         raise SystemExit(3)
 
 
-def decrire_erreur_vision(erreur: Exception) -> str:
-    """Message clair pour les erreurs d'appel vision les plus courantes."""
+# Messages d'erreur de la vision, par langue : la dernière ligne d'erreur est
+# lue à voix haute par la boucle (« ecran_erreur ») ; en anglais, la voix
+# anglaise ne doit pas lire du français.
+ERREURS_VISION = {
+    "fr": {
+        "prefixe": "Erreur : ",
+        "modele": ("Modèle vision introuvable (404) : le modèle configuré "
+                   "n'existe plus ou n'est pas disponible sur ce palier. "
+                   "Vérifiez la liste des modèles du fournisseur et changez "
+                   "modele_vision_groq / modele_vision_anthropic dans "
+                   "config.toml — ou changez de fournisseur_vision."),
+        "limite": ("Limite de débit atteinte (429) : le palier gratuit fait "
+                   "attendre. Réessayez dans quelques secondes."),
+        "cle": "Clé API refusée (401) : vérifiez la clé dans .env.",
+        "autre": "Erreur du modèle vision : {message}",
+        "vide": "le modèle vision n'a rien renvoyé.",
+    },
+    "en": {
+        "prefixe": "Error: ",
+        "modele": ("Vision model not found (404): the configured model no "
+                   "longer exists or is not available on this tier. Check "
+                   "the provider's model list and change modele_vision_groq "
+                   "/ modele_vision_anthropic in config.toml, or change "
+                   "fournisseur_vision."),
+        "limite": ("Rate limit reached (429): the free tier is making us "
+                   "wait. Try again in a few seconds."),
+        "cle": "API key rejected (401): check the key in .env.",
+        "autre": "Vision model error: {message}",
+        "vide": "the vision model returned nothing.",
+    },
+}
+
+
+def _textes_erreur(langue: str) -> dict:
+    return ERREURS_VISION.get(langue, ERREURS_VISION["en"])
+
+
+def decrire_erreur_vision(erreur: Exception, langue: str | None = None) -> str:
+    """Message clair pour les erreurs d'appel vision les plus courantes, dans
+    la langue active (celle de la configuration si `langue` est omise).
+
+    Le code d'état HTTP du SDK est lu en premier ; le texte du message ne
+    sert qu'en dernier recours (anciens SDK sans status_code).
+    """
+    textes = _textes_erreur(langue or config_jarvis.langue())
     message = str(erreur)
-    if "404" in message or "model_not_found" in message:
-        return ("Modèle vision introuvable (404) : le modèle configuré "
-                "n'existe plus ou n'est pas disponible sur ce palier. "
-                "Vérifiez la liste des modèles du fournisseur et changez "
-                "modele_vision_groq / modele_vision_anthropic dans "
-                "config.toml — ou changez de fournisseur_vision.")
-    if "429" in message or "rate" in message.lower():
-        return ("Limite de débit atteinte (429) : le palier gratuit fait "
-                "attendre. Réessayez dans quelques secondes.")
-    if "401" in message or "authentication" in message.lower():
-        return ("Clé API refusée (401) : vérifiez la clé dans .env.")
-    return f"Erreur du modèle vision : {message}"
+    statut = getattr(erreur, "status_code", None)
+    if statut is None:
+        statut = getattr(getattr(erreur, "response", None), "status_code", None)
+    if not isinstance(statut, int):
+        statut = None
+    if statut == 404 or (statut is None and (
+            "404" in message or "model_not_found" in message)):
+        return textes["modele"]
+    if statut == 429 or (statut is None and (
+            "429" in message or "rate_limit" in message.lower())):
+        return textes["limite"]
+    if statut in (401, 403) or (statut is None and (
+            "401" in message or "authentication" in message.lower())):
+        return textes["cle"]
+    return textes["autre"].format(message=message)
 
 
 # ---------------------------------------------------------------------------
@@ -622,19 +669,21 @@ def main() -> int:
         return 0
 
     # decrire : envoi au modèle vision.
+    langue = args.langue or str(config["langue"])
+    textes = _textes_erreur(langue)
     image_b64 = encoder_image(image, int(config["largeur_max"]))
-    prompt = construire_prompt(args.langue or str(config["langue"]),
-                               args.question)
+    prompt = construire_prompt(langue, args.question)
     try:
         vision = creer_vision(config)
         description = vision.decrire(image_b64, prompt)
     except SystemExit:
         raise
     except Exception as erreur:
-        print(f"Erreur : {decrire_erreur_vision(erreur)}", file=sys.stderr)
+        print(textes["prefixe"] + decrire_erreur_vision(erreur, langue),
+              file=sys.stderr)
         return 1
     if not description:
-        print("Erreur : le modèle vision n'a rien renvoyé.", file=sys.stderr)
+        print(textes["prefixe"] + textes["vide"], file=sys.stderr)
         return 1
     print(description)
     return 0

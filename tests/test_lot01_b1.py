@@ -1,8 +1,9 @@
 """Lot 0.1 — B1 : délais explicites et erreurs reconnues par code d'état.
 
 Aucun appel réseau : les SDK groq et anthropic sont remplacés par de faux
-modules. Pas de repli automatique vers Haiku, pas de plafond de dépense (ces
-deux points attendent une décision de Julien) : un test le verrouille.
+modules. Le repli automatique vers Haiku a été décidé le 26 nov. 2026 (lot
+robustesse, tests/test_robustesse.py) ; pas de plafond de dépense : un test le
+verrouille.
 """
 import sys
 import types
@@ -169,13 +170,14 @@ class DelaisDesClients(unittest.TestCase):
 
 
 class HorsPerimetre(unittest.TestCase):
-    def test_pas_de_repli_automatique_ni_plafond_de_depense(self):
-        """Décision en attente : ce lot n'ajoute NI repli automatique vers
-        Haiku NI plafond de dépense (réglage ou classe). Si ce test échoue,
-        une décision de Julien a été prise : mettre ce test à jour avec elle."""
+    def test_pas_de_plafond_de_depense(self):
+        """Décision du 26 nov. 2026 : repli automatique Groq -> Haiku ajouté
+        (lot robustesse, classe Repli) ; le plafond de dépense reste hors
+        périmètre (ni réglage ni classe). Si ce test échoue, une décision de
+        Julien a été prise : mettre ce test à jour avec elle."""
         import re
         import tomllib
-        motif = re.compile(r"plafond|budget|repli|fallback|depense", re.I)
+        motif = re.compile(r"plafond|budget|depense", re.I)
         exemple = tomllib.loads(
             (chemins.RACINE / "config" / "config.example.toml")
             .read_text(encoding="utf-8"))
@@ -186,6 +188,20 @@ class HorsPerimetre(unittest.TestCase):
         self.assertEqual(fautives, [])
         classes = [nom for nom in dir(boucle_voix) if motif.search(nom)]
         self.assertEqual(classes, [])
+
+    def test_le_repli_n_a_pas_de_reglage(self):
+        """Le repli suit la présence d'ANTHROPIC_API_KEY : aucune clé de
+        configuration ne l'active ou ne le coupe (pas de réglage à moitié lu)."""
+        import re
+        import tomllib
+        motif = re.compile(r"repli|fallback", re.I)
+        exemple = tomllib.loads(
+            (chemins.RACINE / "config" / "config.example.toml")
+            .read_text(encoding="utf-8"))
+        cles = list(boucle_voix.DEFAUTS)
+        for valeurs in exemple.values():
+            cles += list(valeurs)
+        self.assertEqual([c for c in cles if motif.search(c)], [])
 
 
 if __name__ == "__main__":

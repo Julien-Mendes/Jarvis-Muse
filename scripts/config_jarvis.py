@@ -125,6 +125,27 @@ def charger_couches(dossier_config: Path | None = None,
             for nom in (NOM_PUBLIC, NOM_PERSONNEL, NOM_LOCAL)]
 
 
+def fichiers_illisibles(dossier_config: Path | None = None) -> list:
+    """Noms des couches présentes mais impossibles à lire (TOML cassé,
+    fichier inaccessible). lire_toml les traite comme vides ; un script qui
+    doit se replier prudemment dans ce cas (thème de l'application) le
+    demande ici. Sans lecteur TOML, aucune couche n'est dite illisible."""
+    dossier = Path(dossier_config) if dossier_config else DOSSIER_CONFIG
+    lecteur = _bibliotheque_toml()
+    if lecteur is None:
+        return []
+    illisibles = []
+    for nom in (NOM_PUBLIC, NOM_PERSONNEL, NOM_LOCAL):
+        chemin = dossier / nom
+        if not chemin.exists():
+            continue
+        try:
+            lecteur.loads(chemin.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            illisibles.append(nom)
+    return illisibles
+
+
 def charger_donnees(dossier_config: Path | None = None,
                     avertir: bool = False) -> dict:
     """Configuration fusionnée (publique < personnelle < locale).

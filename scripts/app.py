@@ -399,50 +399,34 @@ def _texte(langue: str, cle: str) -> str:
 # ---------------------------------------------------------------------------
 
 def charger_config_app(racine: Path) -> dict:
-    """Lit config.toml [app], sinon config.example.toml, sinon défauts.
+    """Lit [app] avec config_jarvis (config.example.toml < config.toml <
+    config.local.toml, comme tous les scripts), sinon défauts.
 
-    Le thème ([app] theme) est lu avec config_jarvis (config.example.toml <
-    config.toml < config.local.toml). Absent : or_et_nuit. Inconnu ou
-    configuration illisible : repli sûr sur jarvis_bleu.
+    Thème ([app] theme) : absent -> or_et_nuit ; inconnu, ou une couche de
+    configuration illisible -> repli sûr sur jarvis_bleu.
     """
     config = dict(DEFAUTS)
-    config["langue"] = "en"  # défaut du projet ; voir [boucle] langue
-    illisible = False
-    fichier = racine / "config" / "config.toml"
-    if not fichier.exists():
-        fichier = racine / "config" / "config.example.toml"
-    if fichier.exists():
-        try:
-            import tomllib
-        except ImportError:
-            try:
-                import tomli as tomllib
-            except ImportError:
-                tomllib = None
-        if tomllib is not None:
-            try:
-                donnees = tomllib.loads(fichier.read_text(encoding="utf-8"))
-                app = donnees.get("app", {})
-                for cle in DEFAUTS:
-                    if cle in app:
-                        config[cle] = app[cle]
-                # Langue de l'interface = langue de la boucle vocale : même
-                # lecture que partout (config_jarvis, K1 : [general] langue ;
-                # l'ancien [boucle] langue reste respecté).
-                langue = config_jarvis.langue(
-                    config_jarvis.charger_donnees(racine / "config"))
-                if langue in LANGUES:
-                    config["langue"] = langue
-            except (ValueError, OSError):
-                illisible = True  # config.toml cassé : thème de repli.
+    config["langue"] = "en"  # défaut du projet ; voir [general] langue
+    dossier = racine / "config"
+    try:
+        donnees = config_jarvis.charger_donnees(dossier)
+        illisible = bool(config_jarvis.fichiers_illisibles(dossier))
+    except Exception:  # Une config cassée ne doit jamais empêcher le lancement.
+        donnees, illisible = {}, True
+    app = config_jarvis.section(donnees, "app")
+    for cle in DEFAUTS:
+        if cle in app and cle != "theme":
+            config[cle] = app[cle]
+    # Langue de l'interface = langue de la boucle vocale ([general] langue ;
+    # l'ancien [boucle] langue reste respecté).
+    langue = config_jarvis.langue(donnees)
+    if langue in LANGUES:
+        config["langue"] = langue
     try:
         if illisible:
             config["theme"] = THEME_REPLI
         else:
-            donnees_theme = config_jarvis.charger_donnees(racine / "config")
-            demande = config_jarvis.section(donnees_theme, "app").get(
-                "theme", DEFAUTS["theme"])
-            config["theme"] = nom_theme(demande)
+            config["theme"] = nom_theme(app.get("theme", DEFAUTS["theme"]))
     except Exception:  # Un thème illisible ne doit jamais empêcher le lancement.
         config["theme"] = THEME_REPLI
     try:
@@ -1142,7 +1126,14 @@ class Application:
         except Exception:
             pass
         finally:
-            self.fenetre.after(delai, self._animer_orbe)
+            # Replanifié seulement si la fenêtre existe encore : après sa
+            # fermeture, after() lèverait une TclError à chaque tour.
+            try:
+                existe = getattr(self.fenetre, "winfo_exists", None)
+                if existe is None or existe():
+                    self.fenetre.after(delai, self._animer_orbe)
+            except Exception:
+                pass
 
     # -- Conversation --------------------------------------------------
 

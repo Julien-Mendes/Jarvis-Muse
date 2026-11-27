@@ -106,7 +106,7 @@ if str(Path(__file__).resolve().parent) not in sys.path:
 
 import config_jarvis
 import lire_voix
-from verrou import VerrouInstance
+from verrou import VerrouInstance, verrou_fichier
 
 # Fuseau horaire : [general] fuseau_horaire de la configuration (K1).
 FUSEAU = config_jarvis.fuseau()
@@ -262,6 +262,9 @@ DOSSIER_TOURS = RACINE / "logs"
 TARIF_ANTHROPIC_ENTREE_USD_PAR_MILLION = 0.10
 TARIF_ANTHROPIC_SORTIE_USD_PAR_MILLION = 0.50
 TAUX_USD_GBP = 0.79
+# Attente maximale du verrou d'un journal .jsonl : passé ce délai, on écrit
+# sans verrou (un journal ne doit jamais figer la boucle).
+DELAI_VERROU_JOURNAL_S = 1.0
 
 
 def chemin_journal_jour(jour: datetime | None = None) -> Path:
@@ -295,8 +298,12 @@ def journaliser_echange(texte_utilisateur: str, texte_jarvis: str) -> None:
             json.dumps({"role": "jarvis", "texte": texte_jarvis,
                         "heure": maintenant}, ensure_ascii=False),
         ]
-        with chemin_journal_jour().open("a", encoding="utf-8") as f:
-            f.write("\n".join(lignes) + "\n")
+        cible = chemin_journal_jour()
+        # P1 : la boucle et un tour --texte (autre processus) peuvent écrire
+        # en même temps : verrou court (1 s au plus, puis on écrit quand même).
+        with verrou_fichier(cible, delai=DELAI_VERROU_JOURNAL_S):
+            with cible.open("a", encoding="utf-8") as f:
+                f.write("\n".join(lignes) + "\n")
     except OSError:
         pass
 
@@ -376,6 +383,7 @@ def _nouveau_bilan(config: dict, mode: str) -> dict:
         "cout_estime_usd": 0.0,
         "cout_estime_gbp": 0.0,
         "reprises": 0,
+        "repli": False,
         "outils": [],
         "erreur": None,
     }
@@ -409,13 +417,15 @@ def journaliser_tour(bilan: dict) -> None:
             "cout_estime_usd": bilan.get("cout_estime_usd", 0.0),
             "cout_estime_gbp": bilan.get("cout_estime_gbp", 0.0),
             "reprises": bilan.get("reprises", 0),
+            "repli": bool(bilan.get("repli", False)),
             "outils": bilan.get("outils", []),
             "erreur": bilan.get("erreur"),
         }
-        chemin = (DOSSIER_TOURS
-                  / f"tours-{datetime.now(FUSEAU).strftime('%Y-%m-%d')}.jsonl")
-        with chemin.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(ligne, ensure_ascii=False) + "\n")
+        cible = (DOSSIER_TOURS
+                 / f"tours-{datetime.now(FUSEAU).strftime('%Y-%m-%d')}.jsonl")
+        with verrou_fichier(cible, delai=DELAI_VERROU_JOURNAL_S):  # P1.
+            with cible.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(ligne, ensure_ascii=False) + "\n")
     except OSError:
         pass
 
@@ -640,6 +650,15 @@ class TranscripteurLocal:
             return "".join(s.text for s in segments).strip()
         finally:
             chemin_tmp.unlink(missing_ok=True)
+
+
+def transcription_utile(texte: str) -> bool:
+    """Faux si la transcription ne contient aucune lettre ni aucun chiffre.
+
+    Whisper renvoie parfois, sur un silence ou un souffle, « ... », « ♪ »,
+    « - » ou « ? » : ce n'est pas une phrase, on ne l'envoie pas au cerveau.
+    """
+    return any(caractere.isalnum() for caractere in (texte or ""))
 
 
 def creer_transcripteur(config: dict):
@@ -888,8 +907,8 @@ def outils_pour(fournisseur: str, langue: str) -> list:
 
 
 # Appels au cerveau (B1) : délai explicite par tentative et une seule reprise
-# du SDK. Le repli automatique vers un autre fournisseur et le plafond de
-# dépense ne font PAS partie de ce lot (décision de Julien en attente).
+# du SDK. Repli automatique Groq -> Claude Haiku : voir Repli ci-dessous
+# (lot robustesse). Pas de plafond de dépense (hors lot).
 DELAI_CERVEAU_DEFAUT_S = 20.0
 NOMBRE_REPRISES_CERVEAU = 1
 
@@ -1112,6 +1131,62 @@ def creer_cerveau(config: dict):
         raise SystemExit(3)
 
 
+# Repli automatique (lot robustesse) : quand Groq est saturé (429), trop lent
+# (délai dépassé) ou injoignable, le tour est rejoué avec Claude Haiku si
+# ANTHROPIC_API_KEY est présente. Une clé refusée (401/403) ou un modèle
+# inconnu (404) ne déclenchent PAS de repli : c'est une erreur de réglage à
+# corriger, pas une panne passagère.
+CATEGORIES_REPLI = {"limite", "delai", "injoignable"}
+# Après un repli, Groq est laissé de côté pendant ce temps : sinon chaque
+# tour attendrait à nouveau le délai (jusqu'à ~2 x delai_cerveau_s) avant de
+# basculer.
+PAUSE_PRINCIPAL_APRES_REPLI_S = 120.0
+
+
+class Repli:
+    """Cerveau de secours (Anthropic) quand le principal est Groq.
+
+    Créé au premier besoin seulement (pas d'import ni de client inutiles) ;
+    None si le principal n'est pas Groq, si ANTHROPIC_API_KEY est absente ou
+    si le module anthropic manque — on garde alors le message d'erreur B1.
+    """
+
+    def __init__(self, config: dict):
+        self.config = config
+        self._cerveau = None
+        self._essaye = False
+        self.pause_jusqua = 0.0
+        self.fournisseur = "anthropic"
+        self.modele = str(config.get("modele_anthropic", ""))
+
+    def obtenir(self):
+        if self._essaye:
+            return self._cerveau
+        self._essaye = True
+        if str(self.config.get("fournisseur_llm")) != "groq":
+            return None
+        cle = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+        if not cle:
+            print("Note : pas de repli automatique vers Claude Haiku "
+                  "(ANTHROPIC_API_KEY absente de .env).", file=sys.stderr)
+            return None
+        try:
+            self._cerveau = CerveauAnthropic(
+                cle, self.modele, self.config["max_tokens_reponse"],
+                str(self.config.get("effort_anthropic", "") or ""),
+                delai_cerveau(self.config))
+        except ImportError:
+            print("Note : pas de repli automatique vers Claude Haiku "
+                  "(module anthropic non installé).", file=sys.stderr)
+        return self._cerveau
+
+    def principal_en_pause(self) -> bool:
+        return time.monotonic() < self.pause_jusqua
+
+    def mettre_principal_en_pause(self) -> None:
+        self.pause_jusqua = time.monotonic() + PAUSE_PRINCIPAL_APRES_REPLI_S
+
+
 # ---------------------------------------------------------------------------
 # Outil minuteur : chemin rapide (regex) + appel au script minuteur
 # ---------------------------------------------------------------------------
@@ -1235,8 +1310,12 @@ def _normaliser_en(texte: str) -> str:
     return " ".join(t.split())
 
 
+# « a » / « an » ne sont PAS des nombres ici (lot robustesse) : l'article
+# se trouve partout (« set a timer… », « wait a minute ») et créait des
+# minuteurs d'une minute ou d'une heure non demandés. « a minute », « an
+# hour » passent par le cerveau ; « half an hour » garde son motif dédié.
 NOMBRES_EN = {
-    "a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
     "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11,
     "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15,
     "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19,
@@ -1247,12 +1326,12 @@ _MOTIF_NOMBRE_EN = (
     r"(?:twenty|thirty|forty|fifty|sixty)(?:[ -](?:one|two|three|four|five|"
     r"six|seven|eight|nine))?|"
     r"one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
-    r"thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|an?)")
+    r"thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)")
 _MOTIF_UNITE_EN = r"(seconds?|secs?|minutes?|mins?|hours?|hrs?)"
 
 
 def _en_minutes_en(texte_nombre: str, unite: str) -> float:
-    """« twenty five », « minutes » -> 25.0 ; « an », « hour » -> 60.0."""
+    """« twenty five », « minutes » -> 25.0 ; « one », « hour » -> 60.0."""
     morceaux = re.split(r"[ -]", texte_nombre.strip())
     if len(morceaux) == 1 and morceaux[0] not in NOMBRES_EN:
         nombre = float(morceaux[0].replace(",", "."))
@@ -1813,7 +1892,7 @@ OUTILS_SANS_ECRITURE = {"decrire_ecran", "ouvrir_navigateur"}
 def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
                 donnees: Path | None, confirmation: dict | None = None,
                 session_navigateur=None, mesures: dict | None = None,
-                etat_tour: dict | None = None) -> str:
+                etat_tour: dict | None = None, repli: Repli | None = None) -> str:
     """Traite une phrase entendue et retourne la réponse à lire à voix haute.
 
     `confirmation` est un dict partagé entre les tours ({"outil": ...,
@@ -1830,6 +1909,10 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
     du texte venu de l'extérieur (description d'écran, futur outil de
     lecture) : l'appelant ne doit alors PAS la garder telle quelle dans
     l'historique donné au modèle (règles §1 et §2).
+
+    `repli` (optionnel, lot robustesse) : cerveau de secours utilisé quand le
+    principal échoue par limite, délai ou panne — seulement si aucun outil
+    n'a encore été exécuté dans le tour (on ne règle jamais deux minuteurs).
     """
     if mesures is not None:
         mesures.setdefault("llm_s", 0.0)
@@ -1891,15 +1974,22 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
                                    config)
 
     # 2. Cerveau, avec les outils déclarés (3 rondes maximum).
-    messages = [{"role": "system", "content": prompt_systeme(str(config["langue"]))}]
-    messages += historique
-    messages.append({"role": "user", "content": transcription})
-    est_groq = config["fournisseur_llm"] == "groq"
-    outils = outils_pour(str(config["fournisseur_llm"]), str(config["langue"]))
-    try:
+    messages_depart = [{"role": "system",
+                        "content": prompt_systeme(str(config["langue"]))}]
+    messages_depart += historique
+    messages_depart.append({"role": "user", "content": transcription})
+    # Outils déjà exécutés dans le tour : s'il y en a, pas de repli (le
+    # rejouer referait l'action).
+    outils_executes: list = []
+
+    def _rondes(cerveau_actif, fournisseur: str) -> str:
+        nonlocal lecture_externe
+        messages = list(messages_depart)
+        est_groq = fournisseur == "groq"
+        outils = outils_pour(fournisseur, str(config["langue"]))
         for _ in range(int(config["max_tours_outils"])):
             debut_llm = time.monotonic()
-            reponse = cerveau.repondre(messages, outils)
+            reponse = cerveau_actif.repondre(messages, outils)
             if mesures is not None:
                 mesures["llm_s"] = round(
                     mesures.get("llm_s", 0.0)
@@ -1911,12 +2001,13 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
                 mesures["sortie_tokens"] = (
                     mesures.get("sortie_tokens", 0)
                     + int(utilisation.get("sortie", 0) or 0))
-            messages.append(cerveau.message_assistant(reponse))
+            messages.append(cerveau_actif.message_assistant(reponse))
             if not reponse["appels_outils"]:
                 return reponse["texte"].strip() or msg(langue,
                                                        "pas_de_reponse")
             for appel in reponse["appels_outils"]:
                 _outil(appel["nom"])
+                outils_executes.append(appel["nom"])
                 args = appel["arguments"] or {}
                 if (lecture_externe
                         and appel["nom"] not in OUTILS_SANS_ECRITURE):
@@ -1972,6 +2063,34 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
                         }],
                     })
         return msg(langue, "pas_abouti")
+
+    def _noter_repli() -> None:
+        if mesures is not None:
+            mesures["repli"] = True
+            mesures["fournisseur"] = repli.fournisseur
+            mesures["modele"] = repli.modele
+
+    secours_direct = (repli.obtenir()
+                      if repli is not None and repli.principal_en_pause()
+                      else None)
+    try:
+        if secours_direct is not None:
+            _noter_repli()
+            return _rondes(secours_direct, repli.fournisseur)
+        try:
+            return _rondes(cerveau, str(config["fournisseur_llm"]))
+        except Exception as erreur:
+            categorie = classer_erreur_cerveau(erreur)
+            secours = (repli.obtenir()
+                       if repli is not None and categorie in CATEGORIES_REPLI
+                       and not outils_executes else None)
+            if secours is None:
+                raise
+            print(f"Cerveau principal indisponible ({categorie}) : "
+                  f"bascule sur {repli.modele}.", file=sys.stderr)
+            repli.mettre_principal_en_pause()
+            _noter_repli()
+            return _rondes(secours, repli.fournisseur)
     except Exception as erreur:
         message = str(erreur)
         print(f"Erreur du cerveau : {message}", file=sys.stderr)
@@ -2154,7 +2273,7 @@ def main() -> int:
         try:
             reponse = traiter_tour(args.texte, config, cerveau, [],
                                    args.donnees, {}, session_texte,
-                                   mesures=bilan)
+                                   mesures=bilan, repli=Repli(config))
             journaliser_echange(args.texte, reponse)
         finally:
             session_texte.fermer()
@@ -2196,6 +2315,7 @@ def main() -> int:
 
     transcripteur = creer_transcripteur(config)
     cerveau = creer_cerveau(config)
+    repli_cerveau = Repli(config)  # Groq -> Claude Haiku en cas de panne.
     # V1 : voix Piper résidente, préchauffée en arrière-plan pendant que la
     # boucle démarre (le chargement et la première synthèse coûtent 1 à 4 s).
     voix_residente = lire_voix.VoixResidente()
@@ -2220,25 +2340,40 @@ def main() -> int:
     print()
 
     etat = {"phase": "repos"}  # repos | enregistrement | traitement | parle
+    # P1 : la phase est lue par le fil de pynput (on_press, on_release) et par
+    # le fil du HUD pendant que la boucle la change : toujours sous verrou.
+    verrou_etat = threading.Lock()
     evenement_presse = threading.Event()
     evenement_relache = threading.Event()
     evenement_interruption = threading.Event()
 
+    def lire_phase() -> str:
+        with verrou_etat:
+            return etat["phase"]
+
+    def changer_phase(phase: str) -> None:
+        with verrou_etat:
+            etat["phase"] = phase
+
     def on_press(touche):
         try:
             if touche == keyboard.Key.f9:
-                if etat["phase"] == "parle":
-                    evenement_interruption.set()
-                elif etat["phase"] == "repos":
-                    evenement_presse.set()
+                # Lecture et réaction d'un bloc : la phase ne peut pas
+                # changer entre le test et l'événement posé.
+                with verrou_etat:
+                    if etat["phase"] == "parle":
+                        evenement_interruption.set()
+                    elif etat["phase"] == "repos":
+                        evenement_presse.set()
         except AttributeError:
             pass
 
     def on_release(touche):
         try:
-            if touche == keyboard.Key.f9 \
-                    and etat["phase"] == "enregistrement":
-                evenement_relache.set()
+            if touche == keyboard.Key.f9:
+                with verrou_etat:
+                    if etat["phase"] == "enregistrement":
+                        evenement_relache.set()
         except AttributeError:
             pass
 
@@ -2251,7 +2386,7 @@ def main() -> int:
         precedent = False
         while True:
             actif = lire_ptt_hud()
-            if actif and not precedent and etat["phase"] == "parle":
+            if actif and not precedent and lire_phase() == "parle":
                 evenement_interruption.set()
             precedent = actif
             time.sleep(0.2)
@@ -2281,13 +2416,13 @@ def main() -> int:
                 if evenement_presse.wait(timeout=0.2):
                     evenement_presse.clear()
                     break
-                if ptt_nouveau_clic() and etat["phase"] == "repos":
+                if ptt_nouveau_clic() and lire_phase() == "repos":
                     demarrage_hud = True
                     break
                 texte_demande = lire_demande_texte()
                 if texte_demande is not None:
                     break
-            if etat["phase"] != "repos":
+            if lire_phase() != "repos":
                 continue
             # Bilan du tour (journal des tours, étape 7.1) ; t_liberation
             # est le point de départ des durées « premier audio » et
@@ -2301,12 +2436,12 @@ def main() -> int:
                 transcription = texte_demande
                 bilan["enregistrement_s"] = 0.0
                 bilan["transcription_s"] = 0.0
-                etat["phase"] = "traitement"
+                changer_phase("traitement")
                 print(f"Julien (texte) : {transcription}")
                 ecrire_etat_hud("reflexion", transcription=transcription)
             else:
-                etat["phase"] = "enregistrement"
-                evenement_relache.clear()
+                evenement_relache.clear()  # avant la phase (voir P1).
+                changer_phase("enregistrement")
                 ecrire_etat_hud("ecoute")
                 print("🎙️  J'écoute… (relâchez F9 pour envoyer)", flush=True)
                 try:
@@ -2317,15 +2452,15 @@ def main() -> int:
                 except Exception as erreur:
                     print(f"Erreur micro : {erreur}", file=sys.stderr)
                     ecrire_etat_hud("erreur", erreur="Micro indisponible")
-                    etat["phase"] = "repos"
+                    changer_phase("repos")
                     continue
                 t_liberation = time.monotonic()
                 bilan["enregistrement_s"] = round(duree, 3)
-                etat["phase"] = "traitement"
+                changer_phase("traitement")
                 if duree < float(config["duree_min_enregistrement"]):
                     print("Trop court, ignoré.")
                     ecrire_etat_hud("repos")
-                    etat["phase"] = "repos"
+                    changer_phase("repos")
                     continue
                 debut_transcription = time.monotonic()
                 try:
@@ -2336,14 +2471,14 @@ def main() -> int:
                     print("Réessayez en maintenant F9 un peu plus longtemps.")
                     ecrire_etat_hud("erreur",
                                     erreur="Transcription impossible")
-                    etat["phase"] = "repos"
+                    changer_phase("repos")
                     continue
                 bilan["transcription_s"] = round(
                     time.monotonic() - debut_transcription, 3)
-                if not transcription.strip():
+                if not transcription_utile(transcription):
                     print("Je n'ai rien compris — réessayez.")
                     ecrire_etat_hud("repos")
-                    etat["phase"] = "repos"
+                    changer_phase("repos")
                     continue
                 print(f"Julien : {transcription}")
                 ecrire_etat_hud("reflexion", transcription=transcription)
@@ -2352,7 +2487,7 @@ def main() -> int:
                                    historique, args.donnees,
                                    confirmation_en_attente,
                                    session_navigateur, mesures=bilan,
-                                   etat_tour=etat_tour)
+                                   etat_tour=etat_tour, repli=repli_cerveau)
             journaliser_echange(transcription, reponse)
             historique.append({"role": "user", "content": transcription})
             # Règles §1/§2 : un texte venu de l'extérieur (description
@@ -2370,9 +2505,9 @@ def main() -> int:
                 bilan["premier_audio_s"] = round(
                     time.monotonic() - t_liberation, 3)
 
-            etat["phase"] = "parle"
+            evenement_interruption.clear()  # avant la phase (voir P1).
+            changer_phase("parle")
             ecrire_etat_hud("reponse", transcription=transcription)
-            evenement_interruption.clear()
             dire(reponse, str(config["langue"]), evenement_interruption,
                  vitesse=float(config["vitesse_voix"]), voix=voix_residente,
                  au_premier_son=_premier_son)
@@ -2384,7 +2519,7 @@ def main() -> int:
                 bilan["cout_estime_usd"] * TAUX_USD_GBP, 6)
             journaliser_tour(bilan)
             ecrire_etat_hud("repos", transcription=transcription)
-            etat["phase"] = "repos"
+            changer_phase("repos")
     except KeyboardInterrupt:
         print("\nAu revoir, Julien.")
     finally:
