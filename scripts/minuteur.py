@@ -57,6 +57,9 @@ MAX_ACTIFS = config_jarvis.nombre_borne(
 DUREE_MAX_MINUTES = config_jarvis.duree_en_minutes(
     config_jarvis.section(_CONFIG, "minuteur").get("duree_max", "7j"),
     7 * 24 * 60)
+# [voix] vitesse (0.5 à 2.0), transmise à lire_voix.py pour les annonces (V1).
+VITESSE_VOIX = config_jarvis.nombre_borne(
+    config_jarvis.section(_CONFIG, "voix").get("vitesse", 1.0), 0.5, 2.0, 1.0)
 AVANCE_MAX = timedelta(days=365)  # 1 an.
 LONGUEUR_MAX_ETIQUETTE = 80
 
@@ -234,7 +237,8 @@ def carillon() -> None:
     winsound.Beep(1318, 600)
 
 
-def annoncer(message: str, langue: str = "fr") -> None:
+def annoncer(message: str, langue: str = "fr",
+             vitesse: float | None = None) -> None:
     """Carillon + lecture du message à voix haute via lire_voix.py.
 
     `langue` (« fr » ou « en ») choisit la voix : elle doit être celle du
@@ -242,8 +246,10 @@ def annoncer(message: str, langue: str = "fr") -> None:
 
     Si la voix n'est pas disponible (Piper non installé, voix absente), le
     message est affiché à l'écran : l'alerte n'est jamais perdue.
+    `vitesse` : [voix] vitesse par défaut (VITESSE_VOIX).
     """
     print(f"🔔 {message}", flush=True)
+    vitesse = VITESSE_VOIX if vitesse is None else vitesse
     carillon()
     script_voix = Path(__file__).resolve().parent / "lire_voix.py"
     try:
@@ -251,7 +257,7 @@ def annoncer(message: str, langue: str = "fr") -> None:
         # (décision de Julien, 22 nov. 2026 : fini le français forcé).
         resultat = subprocess.run(
             [sys.executable, str(script_voix), "--texte", message,
-             "--langue", langue],
+             "--langue", langue, "--vitesse", f"{float(vitesse):g}"],
             capture_output=True, text=True, timeout=120,
         )
         if resultat.returncode != 0:

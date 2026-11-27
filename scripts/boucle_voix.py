@@ -105,6 +105,7 @@ if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import config_jarvis
+import lire_voix
 from verrou import VerrouInstance
 
 # Fuseau horaire : [general] fuseau_horaire de la configuration (K1).
@@ -192,6 +193,10 @@ def charger_config(racine: Path) -> dict:
     config_jarvis.reprendre(config, donnees,
                             ("boucle", "yeux", "navigateur"))
     config["langue"] = config_jarvis.langue(donnees)
+    # V1 : [voix] vitesse, transmise à la voix (résidente ou lire_voix.py).
+    config["vitesse_voix"] = config_jarvis.nombre_borne(
+        config_jarvis.section(donnees, "voix").get("vitesse", 1.0),
+        0.5, 2.0, 1.0)
     touche = config_jarvis.section(donnees, "declenchement").get(
         "touche_push_to_talk")
     if touche and "touche" not in config_jarvis.section(donnees, "boucle"):
@@ -469,18 +474,48 @@ def prompt_systeme(langue: str = "en") -> str:
 # Voix : lecture de la réponse à voix haute (avec interruption)
 # ---------------------------------------------------------------------------
 
-def dire(texte: str, langue: str, interruption: threading.Event) -> None:
-    """Lit le texte à voix haute via lire_voix.py.
+def dire(texte: str, langue: str, interruption: threading.Event,
+         vitesse: float | None = None, voix=None,
+         au_premier_son=None) -> None:
+    """Lit le texte à voix haute.
+
+    V1 : avec `voix` (lire_voix.VoixResidente, Piper gardé en mémoire), la
+    lecture se fait phrase par phrase dans ce processus : plus de relance de
+    Piper à chaque réponse. Si elle échoue, ce qui n'a pas encore été joué est
+    lu par lire_voix.py en sous-processus (l'ancien chemin, gardé en repli).
+    `vitesse` = [voix] vitesse ; `au_premier_son()` est appelé quand le
+    premier son part (mesure « premier audio » du journal des tours).
 
     Si l'événement d'interruption est posé (F9 pressé pendant la lecture),
-    le processus de lecture est arrêté. Si la voix est indisponible, le
-    texte est déjà affiché à l'écran : la réponse n'est jamais perdue.
+    la lecture est arrêtée. Si la voix est indisponible, le texte est déjà
+    affiché à l'écran : la réponse n'est jamais perdue.
     """
     print(f"Jarvis : {texte}", flush=True)
+    if voix is not None:
+        try:
+            complet = voix.lire(texte, langue, vitesse or 1.0, interruption,
+                                au_premier_son)
+            if not complet:
+                print("(Réponse interrompue.)")
+            return
+        except lire_voix.ErreurLecture as erreur:
+            texte = erreur.reste
+            print(f"Voix résidente indisponible ({erreur}) ; "
+                  "repli sur lire_voix.py.", file=sys.stderr)
+            if not texte.strip():
+                return
+        except Exception as erreur:  # noqa: BLE001 — repli ci-dessous.
+            print(f"Voix résidente indisponible ({erreur}) ; "
+                  "repli sur lire_voix.py.", file=sys.stderr)
+    commande = [sys.executable, str(SCRIPT_VOIX), "--texte", texte,
+                "--langue", langue]
+    if vitesse is not None:
+        commande += ["--vitesse", f"{float(vitesse):g}"]
+    if au_premier_son is not None:
+        au_premier_son()
     try:
         processus = subprocess.Popen(
-            [sys.executable, str(SCRIPT_VOIX), "--texte", texte,
-             "--langue", langue],
+            commande,
             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
         )
     except OSError as erreur:
@@ -2161,6 +2196,12 @@ def main() -> int:
 
     transcripteur = creer_transcripteur(config)
     cerveau = creer_cerveau(config)
+    # V1 : voix Piper résidente, préchauffée en arrière-plan pendant que la
+    # boucle démarre (le chargement et la première synthèse coûtent 1 à 4 s).
+    voix_residente = lire_voix.VoixResidente()
+    threading.Thread(target=voix_residente.prechauffer,
+                     args=(str(config["langue"]), float(config["vitesse_voix"])),
+                     daemon=True).start()
     historique: list = []
     # Étape 5 : confirmation d'écran en attente (dict partagé entre les
     # tours) et session navigateur (démarrée paresseusement au premier
@@ -2321,14 +2362,20 @@ def main() -> int:
                 if etat_tour.get("externe") else reponse)})
             historique = historique[-20:]
             # Premier jeton ≈ réponse complète (client non diffusant) ;
-            # premier audio = jusqu'au lancement de la lecture vocale.
+            # premier audio = jusqu'au premier son réellement joué (V1 :
+            # mesuré par la voix elle-même, synthèse de la 1re phrase comprise).
             bilan["premier_token_s"] = bilan.get("llm_s")
-            bilan["premier_audio_s"] = round(
-                time.monotonic() - t_liberation, 3)
+
+            def _premier_son(bilan=bilan, t_liberation=t_liberation):
+                bilan["premier_audio_s"] = round(
+                    time.monotonic() - t_liberation, 3)
+
             etat["phase"] = "parle"
             ecrire_etat_hud("reponse", transcription=transcription)
             evenement_interruption.clear()
-            dire(reponse, str(config["langue"]), evenement_interruption)
+            dire(reponse, str(config["langue"]), evenement_interruption,
+                 vitesse=float(config["vitesse_voix"]), voix=voix_residente,
+                 au_premier_son=_premier_son)
             bilan["total_s"] = round(time.monotonic() - t_liberation, 3)
             bilan["cout_estime_usd"] = estimer_cout_usd(
                 bilan["fournisseur"], bilan["entree_tokens"],

@@ -17,8 +17,11 @@ Voix par défaut (décisions du 21 nov. 2026) :
 """
 
 import argparse
+import queue
+import re
 import sys
 import tempfile
+import threading
 import time
 import wave
 from pathlib import Path
@@ -73,11 +76,8 @@ def trouver_modele(dossier_modeles: Path, nom_voix: str):
     return None, None
 
 
-def synthetiser(texte: str, chemin_modele: Path, chemin_config: Path, vitesse: float):
-    """Synthétise le texte et retourne (fréquence d'échantillonnage, audio brut)."""
-    from piper import PiperVoice
-
-    voix = PiperVoice.load(str(chemin_modele), str(chemin_config))
+def _synthetiser_avec(voix, texte: str, vitesse: float):
+    """Synthétise avec une voix Piper déjà chargée : (fréquence, audio brut)."""
     # Piper : length_scale < 1 = plus rapide, > 1 = plus lent.
     echelle = 1.0 / vitesse
     morceaux = []
@@ -100,6 +100,14 @@ def synthetiser(texte: str, chemin_modele: Path, chemin_config: Path, vitesse: f
     return frequence, b"".join(morceaux)
 
 
+def synthetiser(texte: str, chemin_modele: Path, chemin_config: Path, vitesse: float):
+    """Charge la voix, synthétise le texte et retourne (fréquence, audio brut)."""
+    from piper import PiperVoice
+
+    voix = PiperVoice.load(str(chemin_modele), str(chemin_config))
+    return _synthetiser_avec(voix, texte, vitesse)
+
+
 def ecrire_wav(chemin: Path, frequence: int, donnees: bytes) -> None:
     """Écrit l'audio brut (16 bits, mono) dans un fichier WAV."""
     with wave.open(str(chemin), "wb") as wav:
@@ -109,12 +117,16 @@ def ecrire_wav(chemin: Path, frequence: int, donnees: bytes) -> None:
         wav.writeframes(donnees)
 
 
-def jouer_wav(chemin_wav: Path) -> None:
-    """Joue un fichier WAV sur la sortie audio par défaut (Windows)."""
+def jouer_wav(chemin_wav: Path, interruption: threading.Event | None = None) -> bool:
+    """Joue un fichier WAV sur la sortie audio par défaut (Windows).
+
+    Retourne False si `interruption` a été posé pendant la lecture (la
+    lecture est alors coupée net), True sinon.
+    """
     if sys.platform != "win32":
         print(f"Fichier audio enregistré : {chemin_wav}")
         print("Lecture automatique disponible seulement sous Windows pour l'instant.")
-        return
+        return True
     import winsound
 
     with wave.open(str(chemin_wav), "rb") as wav:
@@ -122,7 +134,192 @@ def jouer_wav(chemin_wav: Path) -> None:
     winsound.PlaySound(
         str(chemin_wav), winsound.SND_FILENAME | winsound.SND_ASYNC
     )
-    time.sleep(duree + 0.5)  # Laisser le temps à la lecture de se terminer.
+    # V1 : marge de fin ramenée de 0,5 s à 0,1 s (elle s'ajoutait à chaque
+    # lecture : un temps mort audible avant le retour au repos).
+    attente = max(0.0, duree + 0.1)
+    if interruption is None:
+        time.sleep(attente)
+        return True
+    if interruption.wait(timeout=attente):
+        winsound.PlaySound(None, 0)  # coupe la lecture en cours.
+        return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# V1 — voix résidente : Piper chargé une seule fois, lecture phrase par phrase
+# ---------------------------------------------------------------------------
+# Mesuré le 26 nov. 2026 (voix alan, phrase de 5,6 s d'audio) : relancer
+# lire_voix.py coûtait ~0,5 s (processus + imports) + 0,8 à 1,3 s (chargement
+# du modèle) + 0,4 à 2,4 s (première synthèse après chargement) avant le
+# premier son, plus 0,5 s de silence en fin. À chaud, la synthèse d'une phrase
+# courte prend ~0,07 s : la voix résidente joue la première phrase pendant que
+# les suivantes se synthétisent.
+
+# Fin de phrase : . ! ? … suivis d'un blanc, ou un saut de ligne.
+_FIN_PHRASE = re.compile(r"(?<=[.!?\u2026])\s+|\n+")
+# Morceau trop court pour être lu seul (« M. », « Dr. ») : collé au suivant.
+_MORCEAU_MIN_CARACTERES = 4
+
+
+def decouper_phrases(texte: str) -> list:
+    """Découpe un texte en phrases à lire l'une après l'autre."""
+    phrases: list = []
+    tampon = ""
+    for morceau in _FIN_PHRASE.split(texte.strip()):
+        morceau = morceau.strip()
+        if not morceau:
+            continue
+        tampon = f"{tampon} {morceau}" if tampon else morceau
+        if len(tampon) >= _MORCEAU_MIN_CARACTERES:
+            phrases.append(tampon)
+            tampon = ""
+    if tampon:
+        if phrases:
+            phrases[-1] = f"{phrases[-1]} {tampon}"
+        else:
+            phrases.append(tampon)
+    return phrases
+
+
+class ErreurLecture(Exception):
+    """La voix résidente n'a pas pu tout lire. `reste` = texte non encore
+    joué : l'appelant qui passe à un autre moyen de lecture ne relit rien."""
+
+    def __init__(self, cause: BaseException, reste: str):
+        super().__init__(str(cause) or type(cause).__name__)
+        self.cause = cause
+        self.reste = reste
+
+
+class VoixResidente:
+    """Voix Piper gardée en mémoire par la boucle vocale (V1).
+
+    Les modèles sont chargés une fois (par voix) puis réutilisés ; `lire`
+    synthétise la phrase suivante pendant que la précédente est jouée.
+    Utilisable depuis plusieurs fils : chargement et synthèse sont sous verrou.
+    """
+
+    def __init__(self, dossier_modeles: Path | None = None,
+                 donnees: dict | None = None):
+        racine = Path(__file__).resolve().parent.parent
+        self.dossier_modeles = Path(dossier_modeles or (racine / "models"))
+        self.donnees = (config_jarvis.charger_donnees()
+                        if donnees is None else donnees)
+        self._voix: dict = {}
+        self._verrou_chargement = threading.Lock()
+        self._verrou_synthese = threading.Lock()
+
+    def charger(self, langue: str, voix: str | None = None):
+        """Voix Piper de la langue (chargée au premier appel seulement)."""
+        moteur = config_jarvis.section(self.donnees, "voix").get("moteur", "piper")
+        if str(moteur).strip().lower() != "piper":
+            raise RuntimeError("seul le moteur « piper » est pris en charge "
+                               "([voix] moteur)")
+        nom = voix or nom_voix_configure(self.donnees, langue)
+        with self._verrou_chargement:
+            if nom not in self._voix:
+                chemin_modele, chemin_config = trouver_modele(
+                    self.dossier_modeles, nom)
+                if chemin_modele is None:
+                    raise FileNotFoundError(
+                        f"voix « {nom} » introuvable dans {self.dossier_modeles}")
+                from piper import PiperVoice
+
+                self._voix[nom] = PiperVoice.load(str(chemin_modele),
+                                                  str(chemin_config))
+            return self._voix[nom]
+
+    def synthetiser(self, texte: str, langue: str, vitesse: float = 1.0):
+        """(fréquence, audio brut) d'un texte, avec la voix résidente."""
+        voix = self.charger(langue)
+        with self._verrou_synthese:
+            return _synthetiser_avec(voix, texte, vitesse)
+
+    def prechauffer(self, langue: str, vitesse: float = 1.0) -> bool:
+        """Charge la voix et fait la première synthèse (la plus lente) à
+        l'avance. Ne lève jamais : False si la voix est indisponible."""
+        try:
+            self.synthetiser("OK.", langue, vitesse)
+            return True
+        except Exception as erreur:  # noqa: BLE001 — repli géré par l'appelant.
+            print(f"Voix résidente non préchargée ({erreur}) ; nouvel essai "
+                  "à la première réponse.", file=sys.stderr)
+            return False
+
+    def lire(self, texte: str, langue: str, vitesse: float = 1.0,
+             interruption: threading.Event | None = None,
+             au_premier_son=None) -> bool:
+        """Lit le texte phrase par phrase. True = lu jusqu'au bout, False =
+        interrompu. Lève ErreurLecture (avec le texte non joué) si la synthèse
+        ou la lecture échoue. `au_premier_son()` est appelé juste avant que
+        la première phrase soit jouée (mesure de latence)."""
+        phrases = decouper_phrases(texte)
+        if not phrases:
+            return True
+        file: queue.Queue = queue.Queue(maxsize=2)
+        arret = threading.Event()
+
+        def deposer(element) -> bool:
+            while not arret.is_set():
+                try:
+                    file.put(element, timeout=0.1)
+                    return True
+                except queue.Full:
+                    continue
+            return False
+
+        def produire():
+            for indice, phrase in enumerate(phrases):
+                if arret.is_set():
+                    return
+                try:
+                    resultat = self.synthetiser(phrase, langue, vitesse)
+                except BaseException as erreur:  # noqa: BLE001
+                    deposer(("erreur", indice, erreur))
+                    return
+                if not deposer(("audio", indice, resultat)):
+                    return
+            deposer(("fin", len(phrases), None))
+
+        threading.Thread(target=produire, daemon=True).start()
+        premier = True
+        try:
+            while True:
+                try:
+                    nature, indice, contenu = file.get(timeout=0.1)
+                except queue.Empty:
+                    if interruption is not None and interruption.is_set():
+                        return False
+                    continue
+                if nature == "fin":
+                    return True
+                if nature == "erreur":
+                    raise ErreurLecture(contenu, " ".join(phrases[indice:]))
+                if interruption is not None and interruption.is_set():
+                    return False
+                frequence, audio = contenu
+                if not audio:
+                    continue
+                with tempfile.NamedTemporaryFile(suffix=".wav",
+                                                 delete=False) as tmp:
+                    chemin_tmp = Path(tmp.name)
+                try:
+                    try:
+                        ecrire_wav(chemin_tmp, frequence, audio)
+                        if premier and au_premier_son is not None:
+                            au_premier_son()
+                        premier = False
+                        complet = jouer_wav(chemin_tmp, interruption)
+                    except Exception as erreur:  # noqa: BLE001
+                        raise ErreurLecture(
+                            erreur, " ".join(phrases[indice:])) from erreur
+                    if not complet:
+                        return False
+                finally:
+                    chemin_tmp.unlink(missing_ok=True)
+        finally:
+            arret.set()
 
 
 def main() -> int:
