@@ -97,10 +97,16 @@ max_tokens_description = 300
 # Lecture seule par défaut : navigation, recherche, clics sur liens/boutons
 # hors formulaire, lecture de texte, capture de page. Aucune soumission de
 # formulaire, aucune connexion, aucun achat (hold_writes).
-# "systeme" : « ouvre [site] » ouvre ton vrai navigateur par défaut (tes
-# connexions, tes profils) ; Playwright sert aux recherches seulement.
-# "playwright" : tout passe par le Chromium de Playwright.
-navigateur_defaut = "systeme"
+# Lot C1 — Chrome seulement : Playwright pilote Google Chrome (installé sur
+# la machine), dans un profil séparé sans tes connexions.
+# "playwright" (défaut depuis C1) : tout passe par Chrome piloté — un seul
+# onglet réutilisé d'un tour à l'autre (pas de nouvel onglet par demande),
+# recherche + clic sur une vidéo YouTube, clic sur un lien par son texte ;
+# si Chrome tombe, il est relancé et Jarvis le dit. Si Chrome ne démarre
+# pas, repli sur le navigateur par défaut (sans clic possible).
+# "systeme" : « ouvre [site] » ouvre ton vrai navigateur par défaut (un
+# nouvel onglet à chaque demande, aucun clic possible).
+navigateur_defaut = "playwright"
 delai_apres_navigation = 2    # secondes d'attente après une navigation (0 à 30)
 max_caracteres_page = 5000    # texte de page lu au maximum (100 à 50000)
 

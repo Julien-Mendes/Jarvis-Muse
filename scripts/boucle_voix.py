@@ -123,6 +123,9 @@ SCRIPT_VOIX = RACINE / "scripts" / "lire_voix.py"
 SCRIPT_MINUTEUR = RACINE / "scripts" / "minuteur.py"
 SCRIPT_YEUX = RACINE / "scripts" / "yeux.py"
 SCRIPT_NAVIGATEUR = RACINE / "scripts" / "navigateur.py"
+# Fonctions pures de navigateur.py (garde-fous du clic, sites de recherche) ;
+# Playwright n'est chargé que dans le processus interactif.
+import navigateur as navigateur_mod  # noqa: E402
 SCRIPT_HUD = RACINE / "scripts" / "hud.py"
 SCRIPT_APP = RACINE / "scripts" / "app.py"
 
@@ -161,9 +164,11 @@ DEFAUTS = {
     "fournisseur_vision": "groq",
     "modele_vision_groq": "qwen/qwen3.8-27b",
     "modele_vision_anthropic": "claude-haiku-4-5-20251001",
-    # Navigateur (étape 5) : "systeme" (navigateur par défaut) ou
-    # "playwright" (session interactive, avec repli sur "systeme").
-    "navigateur_defaut": "systeme",
+    # Navigateur (étape 5, lot C1) : "playwright" (défaut depuis C1 : Google
+    # Chrome piloté, un seul onglet réutilisé d'un tour à l'autre, repli sur
+    # le navigateur par défaut si Chrome ne démarre pas) ou "systeme" (les
+    # sites s'ouvrent dans le navigateur par défaut, un onglet par demande).
+    "navigateur_defaut": "playwright",
 }
 
 
@@ -466,6 +471,16 @@ def prompt_systeme(langue: str = "en") -> str:
             "Tu appelles Julien par son prénom.\n"
             "Tu ne parles jamais de tes outils internes.\n"
             "Tu n'inventes jamais : si tu ne sais pas, tu le dis.\n"
+            "Si Julien demande une action que tu ne peux pas faire, dis-le "
+            "en une phrase claire (par exemple : « Je peux ouvrir YouTube, "
+            "mais je ne peux pas cliquer sur ça. ») — jamais de formule "
+            "vague comme « dis-moi si tu veux que je cherche ».\n"
+            "Ne refais jamais une action déjà faite : ne rouvre pas un site "
+            "déjà ouvert.\n"
+            "Dans le navigateur, tu peux ouvrir un site, ouvrir une vidéo "
+            "YouTube précise (titre et chaîne) et cliquer sur un lien par "
+            "son texte. Tu ne peux jamais te connecter, acheter, remplir un "
+            "formulaire, ni fermer un onglet sans le oui de Julien.\n"
             f"Nous sommes le {date_heure}."
         )
     date_heure = (f"{JOURS_EN[ref.weekday()]}, {MOIS_EN[ref.month - 1]} "
@@ -476,6 +491,15 @@ def prompt_systeme(langue: str = "en") -> str:
         "You call Julien by his first name.\n"
         "You never talk about your internal tools.\n"
         "You never invent facts: if you don't know, say so.\n"
+        "If Julien asks for something you cannot do, say so in one clear "
+        "sentence (for example: \"I can open YouTube, but I can't click on "
+        "that.\") — never a vague offer like \"let me know if you'd like me "
+        "to search\".\n"
+        "Never redo an action already done: do not reopen a site that is "
+        "already open.\n"
+        "In the browser you can open a site, open a specific YouTube video "
+        "(title and channel) and click a link by its text. You can never "
+        "log in, buy, fill in a form, or close a tab without Julien's yes.\n"
         f"Today is {date_heure}."
     )
 
@@ -824,6 +848,83 @@ OUTIL_NAVIGATEUR_ANTHROPIC = {
     "input_schema": OUTIL_NAVIGATEUR_PARAMETRES,
 }
 
+# Outils lot C1 — contrôle du navigateur (Chrome seulement)
+# chercher_et_ouvrir : recherche sur le site + clic sur le résultat qui
+# correspond (titre, chaîne). Sa réponse est prononcée directement, sans
+# repasser par le modèle (le titre trouvé est une donnée externe, §1).
+OUTIL_VIDEO_DESCRIPTION = (
+    "Chercher une vidéo précise sur YouTube et l'ouvrir (clic sur le "
+    "résultat qui correspond au titre et à la chaîne) dans l'onglet actuel "
+    "de Chrome. Utilise-le quand Julien demande d'ouvrir, de mettre ou de "
+    "lancer une vidéo précise. YouTube seulement."
+)
+OUTIL_VIDEO_PARAMETRES = {
+    "type": "object",
+    "properties": {
+        "titre": {
+            "type": "string",
+            "description": "Titre de la vidéo, tel que Julien l'a dit.",
+        },
+        "chaine": {
+            "type": "string",
+            "description": "Nom de la chaîne, si Julien l'a dit (sinon vide).",
+        },
+        "site": {
+            "type": "string",
+            "description": "Site de la vidéo : « youtube ».",
+        },
+    },
+    "required": ["titre"],
+}
+OUTIL_CLIC_DESCRIPTION = (
+    "Cliquer sur un lien ou un bouton de la page ouverte dans Chrome, "
+    "désigné par son texte visible. Pour les cas simples (un lien, un "
+    "onglet de page, « vidéo suivante »). Refusé en code : connexion, "
+    "achat, formulaire, abonnement, fermeture."
+)
+OUTIL_CLIC_PARAMETRES = {
+    "type": "object",
+    "properties": {
+        "texte": {
+            "type": "string",
+            "description": "Texte visible du lien ou du bouton à cliquer.",
+        },
+    },
+    "required": ["texte"],
+}
+OUTIL_FERMER_DESCRIPTION = (
+    "Fermer l'onglet actuel de Chrome (ou toute la fenêtre). Exige d'abord "
+    "le oui oral de Julien : appelle cet outil, puis demande-lui « Je ferme "
+    "l'onglet ? » et attends son oui."
+)
+OUTIL_FERMER_PARAMETRES = {
+    "type": "object",
+    "properties": {
+        "fenetre": {
+            "type": "boolean",
+            "description": "Vrai pour fermer toute la fenêtre de Chrome.",
+        },
+    },
+    "required": [],
+}
+
+
+def _paire_outil(nom: str, description: str, parametres: dict) -> tuple:
+    """(forme Groq, forme Anthropic) d'un outil."""
+    return ({"type": "function",
+             "function": {"name": nom, "description": description,
+                          "parameters": parametres}},
+            {"name": nom, "description": description,
+             "input_schema": parametres})
+
+
+OUTIL_VIDEO_GROQ, OUTIL_VIDEO_ANTHROPIC = _paire_outil(
+    "chercher_et_ouvrir", OUTIL_VIDEO_DESCRIPTION, OUTIL_VIDEO_PARAMETRES)
+OUTIL_CLIC_GROQ, OUTIL_CLIC_ANTHROPIC = _paire_outil(
+    "cliquer", OUTIL_CLIC_DESCRIPTION, OUTIL_CLIC_PARAMETRES)
+OUTIL_FERMER_GROQ, OUTIL_FERMER_ANTHROPIC = _paire_outil(
+    "fermer_onglet", OUTIL_FERMER_DESCRIPTION, OUTIL_FERMER_PARAMETRES)
+
 # Descriptions d'outils envoyées au modèle, par langue (F3). Avec un prompt
 # système en anglais, des descriptions françaises mélangent les langues et
 # dégradent la fiabilité des appels d'outils. Les noms d'outils et de
@@ -859,16 +960,49 @@ TEXTES_OUTILS_EN = {
     },
     "ouvrir_navigateur": {
         "description": (
-            "Open a website in Julien's browser, or search for something "
-            "in it (DuckDuckGo, first result opened). Use it when Julien "
-            "asks to open a site or to search for something in the "
-            "browser. Read-only: no login, no form, no purchase. Do not "
-            "read page contents with this tool."),
+            "Open a website in Julien's browser (current Chrome tab, no new "
+            "tab), or search for something in it (DuckDuckGo, first result "
+            "opened). Use it when Julien asks to open a site or to search "
+            "for something in the browser. To open a specific video, use "
+            "chercher_et_ouvrir instead. Never reopen a site that is "
+            "already open. Read-only: no login, no form, no purchase. Do "
+            "not read page contents with this tool."),
         "parametres": {
             "url": "URL or domain to open (e.g. youtube.com, "
                    "https://example.com).",
             "recherche": "Query to search in the browser "
                          "(e.g. \"weather tomorrow\") — if no URL.",
+        },
+    },
+    "chercher_et_ouvrir": {
+        "description": (
+            "Search for a specific video on YouTube and open it (clicks the "
+            "result matching the title and channel) in the current Chrome "
+            "tab. Use it when Julien asks to open, play or put on a specific "
+            "video. YouTube only."),
+        "parametres": {
+            "titre": "Title of the video, as Julien said it.",
+            "chaine": "Channel name, if Julien said it (otherwise empty).",
+            "site": "Site of the video: \"youtube\".",
+        },
+    },
+    "cliquer": {
+        "description": (
+            "Click a link or button on the page open in Chrome, by its "
+            "visible text. For simple cases (a link, a page tab, \"next "
+            "video\"). Refused in code: login, purchase, form, subscribe, "
+            "close."),
+        "parametres": {
+            "texte": "Visible text of the link or button to click.",
+        },
+    },
+    "fermer_onglet": {
+        "description": (
+            "Close the current Chrome tab (or the whole window). Requires "
+            "Julien's spoken yes first: call this tool, then ask him "
+            "\"Shall I close the tab?\" and wait for his yes."),
+        "parametres": {
+            "fenetre": "True to close the whole Chrome window.",
         },
     },
 }
@@ -896,11 +1030,17 @@ def outils_pour(fournisseur: str, langue: str) -> list:
     forme = "groq" if fournisseur == "groq" else "anthropic"
     bases = ({"regler_minuteur": OUTIL_MINUTEUR_GROQ,
               "decrire_ecran": OUTIL_ECRAN_GROQ,
-              "ouvrir_navigateur": OUTIL_NAVIGATEUR_GROQ}
+              "ouvrir_navigateur": OUTIL_NAVIGATEUR_GROQ,
+              "chercher_et_ouvrir": OUTIL_VIDEO_GROQ,
+              "cliquer": OUTIL_CLIC_GROQ,
+              "fermer_onglet": OUTIL_FERMER_GROQ}
              if forme == "groq" else
              {"regler_minuteur": OUTIL_MINUTEUR_ANTHROPIC,
               "decrire_ecran": OUTIL_ECRAN_ANTHROPIC,
-              "ouvrir_navigateur": OUTIL_NAVIGATEUR_ANTHROPIC})
+              "ouvrir_navigateur": OUTIL_NAVIGATEUR_ANTHROPIC,
+              "chercher_et_ouvrir": OUTIL_VIDEO_ANTHROPIC,
+              "cliquer": OUTIL_CLIC_ANTHROPIC,
+              "fermer_onglet": OUTIL_FERMER_ANTHROPIC})
     if langue == "fr":
         return list(bases.values())
     return [_outil_en(base, nom, forme) for nom, base in bases.items()]
@@ -1218,6 +1358,26 @@ MESSAGES = {
         "nav_ouvert": "C'est ouvert, Julien : {quoi}.",
         "nav_ouvert_defaut": "C'est ouvert, Julien : {quoi} (dans ton navigateur par défaut).",
         "nav_impossible": "Désolé Julien, je n'ai pas pu ouvrir le navigateur sur cette machine.",
+        "nav_deja_ouvert": "C'est déjà ouvert dans l'onglet actuel, Julien : {quoi}.",
+        "nav_vient_d_ouvrir": "Je viens déjà d'ouvrir {quoi}, Julien. Redemande-le si tu veux vraiment un nouvel onglet.",
+        "nav_redemarre": "Le navigateur s'était fermé, je l'ai relancé. ",
+        "video_manque_titre": "Il me manque le titre de la vidéo, Julien.",
+        "video_site_non_pris": "Je sais chercher et ouvrir une vidéo sur YouTube seulement, Julien, pas encore sur {site}.",
+        "video_ouverte": "C'est ouvert, Julien : « {titre} »{chaine}.",
+        "video_chaine": ", de {chaine}",
+        "video_introuvable": "Je n'ai pas trouvé « {titre} » sur YouTube, Julien. Les premiers résultats sont : {liste}. Lequel veux-tu ?",
+        "video_aucun_resultat": "Je n'ai trouvé aucun résultat pour « {titre} » sur YouTube, Julien ; la page de recherche est ouverte.",
+        "video_sans_clic": "Je ne peux pas piloter Chrome en ce moment, Julien, donc je ne peux pas cliquer sur la vidéo : j'ai seulement ouvert la recherche YouTube dans ton navigateur par défaut.",
+        "video_impossible": "Je ne peux pas piloter Chrome en ce moment, Julien, donc je ne peux pas ouvrir cette vidéo.",
+        "citation": "« {texte} »",
+        "liste_et": " et ",
+        "fermer_demande": "Je ferme l'onglet actuel, Julien ? Dis-moi simplement oui.",
+        "fermer_demande_fenetre": "Je ferme la fenêtre de Chrome, Julien ? Dis-moi simplement oui.",
+        "fermer_ok": "C'est fermé, Julien.",
+        "fermer_rien": "Il n'y a aucun onglet ouvert à fermer, Julien.",
+        "fermer_impossible": "Désolé Julien, je n'ai pas pu fermer l'onglet.",
+        "historique_video": "[Vidéo YouTube ouverte dans Chrome à la demande de Julien : « {titre} ».]",
+        "historique_video_absente": "[Vidéo YouTube « {titre} » non trouvée ; premiers résultats lus à Julien.]",
         "pas_de_reponse": "Je n'ai pas de réponse, Julien.",
         "pas_abouti": "Je n'ai pas réussi à aboutir, Julien — peux-tu reformuler ?",
         "limite": ("Je suis limité en ce moment, Julien — le palier "
@@ -1240,8 +1400,24 @@ MESSAGES = {
             "n'aura lieu qu'après sa confirmation."),
         "outil_inconnu": (
             "Outil inconnu : je sais régler des minuteurs, "
-            "regarder l'écran (avec confirmation) et ouvrir "
-            "le navigateur."),
+            "regarder l'écran (avec confirmation), ouvrir un site, ouvrir "
+            "une vidéo YouTube précise et cliquer sur un lien."),
+        "outil_clic_ok": ("Clic fait sur « {texte} » dans l'onglet actuel. "
+                          "Dis-le à Julien en une phrase."),
+        "outil_clic_refuse": (
+            "Clic refusé par les garde-fous : {raison} Dis à Julien en une "
+            "phrase que tu ne peux pas faire ce clic, et qu'il peut le "
+            "faire lui-même."),
+        "outil_clic_echec": (
+            "Clic impossible : {raison} Dis à Julien en une phrase ce qui "
+            "n'a pas marché ; ne rouvre pas le site."),
+        "outil_clic_sans_navigateur": (
+            "Chrome n'est pas disponible : aucun clic possible. Dis à Julien "
+            "en une phrase que tu ne peux pas cliquer pour l'instant."),
+        "outil_fermer_confirmation": (
+            "CONFIRMATION REQUISE : ne dis pas que c'est fermé. Demande à "
+            "Julien : « Je ferme l'onglet ? » et attends son oui. La "
+            "fermeture n'aura lieu qu'après sa confirmation."),
         "outil_bloque": (
             "Action refusée : ce tour a lu du contenu externe, donc aucune "
             "écriture n'est permise. Dis à Julien de la redemander dans un "
@@ -1265,6 +1441,26 @@ MESSAGES = {
         "nav_ouvert": "Done, Julien: opened {quoi}.",
         "nav_ouvert_defaut": "Done, Julien: opened {quoi} in your default browser.",
         "nav_impossible": "Sorry Julien, I couldn't open the browser on this machine.",
+        "nav_deja_ouvert": "That's already open in the current tab, Julien: {quoi}.",
+        "nav_vient_d_ouvrir": "I just opened {quoi}, Julien. Ask again if you really want a new tab.",
+        "nav_redemarre": "The browser had closed, so I restarted it. ",
+        "video_manque_titre": "I'm missing the video's title, Julien.",
+        "video_site_non_pris": "I can only search for and open videos on YouTube for now, Julien, not on {site}.",
+        "video_ouverte": "Done, Julien: playing \"{titre}\"{chaine}.",
+        "video_chaine": " by {chaine}",
+        "video_introuvable": "I couldn't find \"{titre}\" on YouTube, Julien. The first results are {liste}. Which one do you want?",
+        "video_aucun_resultat": "I found no results for \"{titre}\" on YouTube, Julien; the search page is open.",
+        "video_sans_clic": "I can't control Chrome right now, Julien, so I can't click on the video: I only opened the YouTube search in your default browser.",
+        "video_impossible": "I can't control Chrome right now, Julien, so I can't open that video.",
+        "citation": "\"{texte}\"",
+        "liste_et": " and ",
+        "fermer_demande": "Shall I close the current tab, Julien? Just say yes.",
+        "fermer_demande_fenetre": "Shall I close the Chrome window, Julien? Just say yes.",
+        "fermer_ok": "Closed, Julien.",
+        "fermer_rien": "There's no open tab to close, Julien.",
+        "fermer_impossible": "Sorry Julien, I couldn't close the tab.",
+        "historique_video": "[YouTube video opened in Chrome at Julien's request: \"{titre}\".]",
+        "historique_video_absente": "[YouTube video \"{titre}\" not found; first results read to Julien.]",
         "pas_de_reponse": "I don't have an answer, Julien.",
         "pas_abouti": "I couldn't get there, Julien. Could you rephrase?",
         "limite": ("I'm being rate-limited right now, Julien. The free tier "
@@ -1286,7 +1482,24 @@ MESSAGES = {
             "confirmation."),
         "outil_inconnu": (
             "Unknown tool: I can set timers, look at the screen "
-            "(with confirmation) and open the browser."),
+            "(with confirmation), open a site, open a specific YouTube "
+            "video and click a link."),
+        "outil_clic_ok": ("Clicked \"{texte}\" in the current tab. Tell "
+                          "Julien in one sentence."),
+        "outil_clic_refuse": (
+            "Click refused by the safeguards: {raison} Tell Julien in one "
+            "sentence that you can't make this click and that he can do it "
+            "himself."),
+        "outil_clic_echec": (
+            "Click failed: {raison} Tell Julien in one sentence what didn't "
+            "work; do not reopen the site."),
+        "outil_clic_sans_navigateur": (
+            "Chrome is not available: no click is possible. Tell Julien in "
+            "one sentence that you can't click right now."),
+        "outil_fermer_confirmation": (
+            "CONFIRMATION REQUIRED: do not say it is closed. Ask Julien: "
+            "\"Shall I close the tab?\" and wait for his yes. It will only "
+            "be closed after his confirmation."),
         "outil_bloque": (
             "Action refused: this turn read external content, so no writes "
             "are allowed. Tell Julien to ask again in a new turn."),
@@ -1733,19 +1946,31 @@ def executer_ecran(demande: dict, config: dict) -> str:
 class SessionNavigateur:
     """Session Playwright interactive (scripts/navigateur.py --interactif).
 
-    Protocole JSON lignes. Démarrée paresseusement, au premier usage ;
-    en cas d'échec (Playwright absent, Chromium manquant), la boucle
-    retombe sur le navigateur par défaut (webbrowser.open).
+    Protocole JSON lignes. Démarrée paresseusement, au premier usage, puis
+    gardée d'un tour à l'autre (lot C1) : un seul Chrome, un onglet courant
+    réutilisé. Si le processus est tombé, il est relancé au tour suivant et
+    la réponse porte "redemarre" (Jarvis le dit). En cas d'échec (Playwright
+    absent, Chrome manquant), la boucle retombe sur le navigateur par défaut
+    (webbrowser.open) et le dit.
     """
 
     def __init__(self):
         self.processus = None
         self._file_reponses = None
+        self._a_demarre = False
+        self._redemarre = False
+
+    def active(self) -> bool:
+        """Vrai si le processus du navigateur tourne."""
+        return self.processus is not None and self.processus.poll() is None
 
     def demarrer(self) -> bool:
         """Lance le processus interactif ; False si impossible."""
         if self.processus is not None and self.processus.poll() is None:
             return True
+        # Une session existait et n'est plus là (fermée par Julien, plantée
+        # ou coupée après un délai) : c'est une relance, à signaler.
+        relance = self._a_demarre
         try:
             self.processus = subprocess.Popen(
                 [sys.executable, str(SCRIPT_NAVIGATEUR), "--interactif"],
@@ -1755,6 +1980,8 @@ class SessionNavigateur:
             self.processus = None
             return False
         self._file_reponses = None
+        self._a_demarre = True
+        self._redemarre = self._redemarre or relance
         return True
 
     def envoyer(self, commande: dict, delai: float = 60.0) -> dict:
@@ -1790,12 +2017,23 @@ class SessionNavigateur:
             self.fermer()
             return {"ok": False, "erreur": "navigateur interactif coupé"}
         try:
-            return json.loads(ligne)
+            reponse = json.loads(ligne)
         except ValueError:
             return {"ok": False, "erreur": "réponse navigateur illisible"}
+        if self._redemarre and isinstance(reponse, dict):
+            reponse["redemarre"] = True
+        self._redemarre = False
+        return reponse
 
-    def fermer(self) -> None:
-        """Ferme la session (sans jamais échouer)."""
+    def fermer(self, volontaire: bool = False) -> None:
+        """Ferme la session (sans jamais échouer).
+
+        `volontaire` : fermeture demandée (et confirmée) par Julien — la
+        prochaine ouverture n'est alors pas annoncée comme une relance.
+        """
+        if volontaire:
+            self._a_demarre = False
+            self._redemarre = False
         if self.processus is None:
             return
         try:
@@ -1835,7 +2073,7 @@ def executer_navigateur(demande: dict, session: SessionNavigateur | None,
     # s'ouvrent dans le vrai navigateur par défaut de Julien (ses
     # connexions, ses profils) ; Playwright est alors réservé aux
     # recherches. « playwright » = tout passe par Playwright.
-    mode = str(config.get("navigateur_defaut", "systeme")).strip().lower()
+    mode = str(config.get("navigateur_defaut", "playwright")).strip().lower()
     utiliser_playwright = bool(recherche) or mode == "playwright"
     if session is not None and utiliser_playwright:
         # Le champ de la recherche s'appelle « requete » : c'est ce que lit
@@ -1845,10 +2083,14 @@ def executer_navigateur(demande: dict, session: SessionNavigateur | None,
         reponse = session.envoyer(commande)
         if reponse.get("ok"):
             quoi = recherche or url
+            prefixe = (msg(langue, "nav_redemarre")
+                       if reponse.get("redemarre") else "")
             # Le titre et l'URL finale d'une page sont des données externes
             # (règle §1) : ni prononcés, ni gardés dans l'historique du
             # modèle. On ne répète que ce que Julien a demandé.
-            return msg(langue, "nav_ouvert", quoi=quoi)
+            if reponse.get("deja_ouvert"):
+                return prefixe + msg(langue, "nav_deja_ouvert", quoi=quoi)
+            return prefixe + msg(langue, "nav_ouvert", quoi=quoi)
         # Échec Playwright : repli sur le navigateur par défaut ci-dessous.
         print(f"Navigateur Playwright indisponible "
               f"({reponse.get('erreur', 'erreur inconnue')}) ; repli sur "
@@ -1862,10 +2104,179 @@ def executer_navigateur(demande: dict, session: SessionNavigateur | None,
         cible = "https://duckduckgo.com/?q=" + quote_plus(recherche)
     elif not re.match(r"(?i)^https?://", cible):
         cible = "https://" + cible
+    quoi = recherche or url
+    # Le navigateur par défaut ouvre un onglet par appel : la même demande
+    # répétée juste après n'en rouvre pas un autre (une fois ; redemander
+    # passe outre, Julien a pu fermer l'onglet).
+    derniere = getattr(session, "derniere_ouverture_systeme", None)
+    if (session is not None and derniere is not None
+            and derniere[0] == cible
+            and time.monotonic() - derniere[1] < DELAI_MEME_OUVERTURE_S):
+        session.derniere_ouverture_systeme = None
+        return msg(langue, "nav_vient_d_ouvrir", quoi=quoi)
     if webbrowser.open(cible):
-        quoi = recherche or url
+        if session is not None:
+            try:
+                session.derniere_ouverture_systeme = (cible, time.monotonic())
+            except AttributeError:
+                pass
         return msg(langue, "nav_ouvert_defaut", quoi=quoi)
     return msg(langue, "nav_impossible")
+
+
+# Même site redemandé dans ce délai (navigateur par défaut) : pas de nouvel
+# onglet, Jarvis dit qu'il vient de l'ouvrir.
+DELAI_MEME_OUVERTURE_S = 300.0
+
+
+def _texte_page_parle(texte: str, max_caracteres: int = 120) -> str:
+    """Titre ou nom de chaîne venu d'une page, réduit à du texte prononçable.
+
+    Donnée externe (§1) : il est lu à Julien tel quel par le code, jamais
+    transmis au modèle ; on retire caractères de contrôle et balises, et on
+    tronque.
+    """
+    texte = re.sub(r"[\x00-\x1f\x7f<>{}\[\]`]", " ", str(texte or ""))
+    texte = " ".join(texte.split())
+    if len(texte) > max_caracteres:
+        texte = texte[:max_caracteres].rsplit(" ", 1)[0] + "…"
+    return texte
+
+
+def _liste_parlee(langue: str, elements: list) -> str:
+    cites = [msg(langue, "citation", texte=e) for e in elements if e]
+    if len(cites) <= 1:
+        return "".join(cites)
+    return ", ".join(cites[:-1]) + msg(langue, "liste_et") + cites[-1]
+
+
+def executer_video(demande: dict, session, config: dict) -> dict:
+    """Cherche une vidéo sur YouTube et ouvre le résultat qui correspond.
+
+    Retour : {"texte": phrase à dire, "externe": bool, "historique": str}.
+    La phrase est prononcée directement (jamais redonnée au modèle) : elle
+    contient le titre trouvé, une donnée externe (§1). `historique` est ce
+    que le modèle gardera du tour — seulement les mots de Julien.
+    """
+    langue = str(config["langue"])
+    titre = " ".join(str(demande.get("titre") or "").split())
+    chaine = " ".join(str(demande.get("chaine") or "").split())
+    site = " ".join(str(demande.get("site") or "youtube").split())
+    if not titre:
+        return {"texte": msg(langue, "video_manque_titre"), "externe": False}
+    if navigateur_mod.site_recherche(site) is None:
+        return {"texte": msg(langue, "video_site_non_pris",
+                             site=_texte_page_parle(site, 40)),
+                "externe": False}
+    historique = msg(langue, "historique_video", titre=titre)
+    reponse = {"ok": False, "erreur": "aucune session navigateur"}
+    if session is not None:
+        reponse = session.envoyer(
+            {"commande": "chercher_et_ouvrir", "site": "youtube",
+             "titre": titre, "chaine": chaine}, delai=90.0)
+    if not reponse.get("ok"):
+        # Chrome indisponible : on ne peut pas cliquer. On le dit, et on
+        # ouvre seulement la page de recherche dans le navigateur par défaut.
+        print(f"Navigateur Playwright indisponible "
+              f"({reponse.get('erreur', 'erreur inconnue')}).",
+              file=sys.stderr)
+        import webbrowser
+
+        url = navigateur_mod.url_recherche_site(
+            "youtube", titre + (" " + chaine if chaine else ""))
+        cle = "video_sans_clic" if webbrowser.open(url) else "video_impossible"
+        return {"texte": msg(langue, cle), "externe": False,
+                "historique": msg(langue, "historique_video_absente",
+                                  titre=titre)}
+    prefixe = msg(langue, "nav_redemarre") if reponse.get("redemarre") else ""
+    if reponse.get("trouve"):
+        chaine_trouvee = _texte_page_parle(reponse.get("chaine_resultat"), 60)
+        texte = msg(langue, "video_ouverte",
+                    titre=_texte_page_parle(reponse.get("titre_resultat")),
+                    chaine=(msg(langue, "video_chaine", chaine=chaine_trouvee)
+                            if chaine_trouvee else ""))
+        return {"texte": prefixe + texte, "externe": True,
+                "historique": historique}
+    titres = [_texte_page_parle(r.get("titre"), 80)
+              for r in (reponse.get("resultats") or [])[:3]
+              if isinstance(r, dict)]
+    historique = msg(langue, "historique_video_absente", titre=titre)
+    if not any(titres):
+        return {"texte": prefixe + msg(langue, "video_aucun_resultat",
+                                       titre=titre),
+                "externe": False, "historique": historique}
+    return {"texte": prefixe + msg(langue, "video_introuvable", titre=titre,
+                                   liste=_liste_parlee(langue, titres)),
+            "externe": True, "historique": historique}
+
+
+def executer_clic(texte: str, session, config: dict) -> str:
+    """Clique un lien ou un bouton par son texte (résultat pour le modèle).
+
+    Les garde-fous sont dans navigateur.py (refus_clic, refus_element) :
+    connexion, achat, formulaire, fermeture et actions sur un compte sont
+    refusés en code. Le titre de la page obtenue n'est pas renvoyé (§1).
+    """
+    langue = str(config["langue"])
+    texte = " ".join(str(texte or "").split())
+    raison = navigateur_mod.refus_clic(texte, bouton=False)
+    if raison:
+        return msg(langue, "outil_clic_refuse", raison=raison + ".")
+    if session is None:
+        return msg(langue, "outil_clic_sans_navigateur")
+    reponse = session.envoyer({"commande": "cliquer", "texte": texte})
+    if reponse.get("ok"):
+        prefixe = (msg(langue, "nav_redemarre")
+                   if reponse.get("redemarre") else "")
+        return prefixe + msg(langue, "outil_clic_ok", texte=texte)
+    erreur = str(reponse.get("erreur", "erreur inconnue"))
+    if erreur.startswith("Clic refusé"):
+        return msg(langue, "outil_clic_refuse",
+                   raison=erreur.split(":", 1)[-1].strip())
+    return msg(langue, "outil_clic_echec", raison=erreur)
+
+
+def executer_fermeture(demande: dict, session, config: dict) -> str:
+    """Ferme l'onglet courant ou la fenêtre (déjà confirmé à l'oral)."""
+    langue = str(config["langue"])
+    if session is None or not session.active():
+        return msg(langue, "fermer_rien")
+    if demande.get("fenetre"):
+        session.fermer(volontaire=True)
+        return msg(langue, "fermer_ok")
+    reponse = session.envoyer({"commande": "fermer_onglet"})
+    if not reponse.get("ok"):
+        return msg(langue, "fermer_impossible")
+    if not reponse.get("ferme"):
+        return msg(langue, "fermer_rien")
+    if not reponse.get("onglets_restants"):
+        # Dernier onglet fermé : Chrome s'est fermé, la prochaine ouverture
+        # n'est pas une « relance ».
+        session.fermer(volontaire=True)
+    return msg(langue, "fermer_ok")
+
+
+def detecter_fermeture(texte: str):
+    """« ferme l'onglet » / « close the tab » (chemin rapide, sans LLM).
+
+    Retourne {"fenetre": bool} ou None. Rien n'est fermé ici : le tour
+    demande d'abord un « oui » oral (vérifié en code, règle §3).
+    """
+    t = " ".join(re.sub(r"[^\w\s'-]", " ", texte.strip().lower()
+                        .replace("\u2019", "'")).split())
+    t = re.sub(r"^(?:jarvis |please |s'il te plaît )", "", t)
+    t = re.sub(r" (?:please|s'il te plaît|stp|svp|jarvis)$", "", t)
+    if re.fullmatch(r"ferme (?:l'onglet|cet onglet|l'onglet actuel|"
+                    r"l'onglet du navigateur|l'onglet de chrome)", t):
+        return {"fenetre": False}
+    if re.fullmatch(r"ferme (?:la fenêtre (?:du navigateur|de chrome)|"
+                    r"le navigateur|chrome)", t):
+        return {"fenetre": True}
+    if re.fullmatch(r"close (?:the|this|that) (?:current )?(?:browser )?tab", t):
+        return {"fenetre": False}
+    if re.fullmatch(r"close (?:the )?(?:browser|chrome)(?: window)?", t):
+        return {"fenetre": True}
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -1886,6 +2297,9 @@ OUTILS_LECTURE_EXTERNE: set = set()
 # Après une lecture externe dans le tour, seuls ces outils restent permis.
 # Liste d'autorisation : un outil ajouté plus tard est refusé tant qu'on ne
 # l'a pas déclaré « sans écriture » ici (échec fermé).
+# Lot C1 : chercher_et_ouvrir, cliquer et fermer_onglet n'y figurent pas
+# (échec fermé) — chercher_et_ouvrir termine de toute façon le tour sans
+# rien redonner au modèle, et fermer_onglet exige un « oui » oral.
 OUTILS_SANS_ECRITURE = {"decrire_ecran", "ouvrir_navigateur"}
 
 
@@ -1953,6 +2367,10 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
                                description=description.split("\n", 1)[1]
                                .rsplit("\n</untrusted_data>", 1)[0].strip())
                 return description
+            if en_attente["outil"] == "fermer_onglet":
+                _outil("fermer_onglet")
+                return executer_fermeture(en_attente.get("arguments", {}),
+                                          session_navigateur, config)
         # Pas une confirmation : on continue avec la phrase comme requête.
 
     # 1. Chemins rapides : minuteur, écran, navigateur (sans appel LLM).
@@ -1967,6 +2385,15 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
             confirmation["arguments"] = demande_ecran
             confirmation["arme_a"] = time.monotonic()
         return msg(langue, "ecran_demande")
+    demande_fermeture = detecter_fermeture(transcription)
+    if demande_fermeture is not None:
+        # Fermer un onglet ou la fenêtre : toujours un « oui » oral d'abord.
+        if confirmation is not None:
+            confirmation["outil"] = "fermer_onglet"
+            confirmation["arguments"] = demande_fermeture
+            confirmation["arme_a"] = time.monotonic()
+        return msg(langue, "fermer_demande_fenetre"
+                   if demande_fermeture["fenetre"] else "fermer_demande")
     demande_navigateur = detecter_ouverture(transcription)
     if demande_navigateur is not None:
         _outil("ouvrir_navigateur")
@@ -2042,6 +2469,32 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
                         {"url": args.get("url", "") or "",
                          "recherche": args.get("recherche", "") or ""},
                         session_navigateur, config)
+                elif appel["nom"] == "chercher_et_ouvrir":
+                    # Réponse directe : la phrase (titre trouvé = donnée
+                    # externe, §1) est dite à Julien sans repasser par le
+                    # modèle ; l'historique ne garde que ses mots.
+                    video = executer_video(
+                        {"titre": args.get("titre", "") or "",
+                         "chaine": args.get("chaine", "") or "",
+                         "site": args.get("site", "") or "youtube"},
+                        session_navigateur, config)
+                    if video.get("externe"):
+                        etat_tour["externe"] = True
+                    if video.get("historique"):
+                        etat_tour["historique"] = video["historique"]
+                    return video["texte"]
+                elif appel["nom"] == "cliquer":
+                    resultat_outil = executer_clic(
+                        args.get("texte", "") or "", session_navigateur,
+                        config)
+                elif appel["nom"] == "fermer_onglet":
+                    # Jamais de fermeture directe : un « oui » oral d'abord.
+                    if confirmation is not None:
+                        confirmation["outil"] = "fermer_onglet"
+                        confirmation["arguments"] = {
+                            "fenetre": bool(args.get("fenetre"))}
+                        confirmation["arme_a"] = time.monotonic()
+                    resultat_outil = msg(langue, "outil_fermer_confirmation")
                 else:
                     resultat_outil = msg(langue, "outil_inconnu")
                 if appel["nom"] in OUTILS_LECTURE_EXTERNE:
@@ -2176,7 +2629,7 @@ def verifier(config: dict) -> int:
         except ImportError:
             print(f"  [OPTIONNEL] module {module} — "
                   "pip install -r scripts/requirements-etape5.txt "
-                  "(+ playwright install chromium)")
+                  "(+ Google Chrome installé)")
     if config["fournisseur_vision"] == "groq":
         ligne_optionnel(bool(os.environ.get("GROQ_API_KEY", "").strip()),
                         "GROQ_API_KEY dans .env (vision)")
@@ -2262,6 +2715,7 @@ def main() -> int:
         # d'avoir pu demander la confirmation.
         if (detecter_minuteur(args.texte) is None
                 and detecter_ecran(args.texte) is None
+                and detecter_fermeture(args.texte) is None
                 and detecter_ouverture(args.texte) is None):
             cerveau = creer_cerveau(config)
         # En mode --texte (un seul tour), une demande d'écran ne peut pas
@@ -2493,8 +2947,9 @@ def main() -> int:
             # Règles §1/§2 : un texte venu de l'extérieur (description
             # d'écran…) est lu à Julien mais jamais redonné au modèle.
             historique.append({"role": "assistant", "content": (
-                msg(str(config["langue"]), "historique_externe")
-                if etat_tour.get("externe") else reponse)})
+                etat_tour.get("historique")
+                or (msg(str(config["langue"]), "historique_externe")
+                    if etat_tour.get("externe") else reponse))})
             historique = historique[-20:]
             # Premier jeton ≈ réponse complète (client non diffusant) ;
             # premier audio = jusqu'au premier son réellement joué (V1 :

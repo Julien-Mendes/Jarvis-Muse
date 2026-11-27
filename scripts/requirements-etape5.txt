@@ -1,6 +1,7 @@
 # Dépendances de l'étape 5 — Yeux et mains (vision d'écran + navigateur)
 # Installer avec : pip install -r scripts/requirements-etape5.txt
-# Puis : playwright install chromium
+# Google Chrome doit être installé (lot C1 : Chrome seulement, piloté par
+# Playwright ; plus besoin de « playwright install chromium »).
 # (dans l'environnement virtuel du dépôt, voir docs/etape-5-yeux-mains.md)
 
 Pillow>=10.0
