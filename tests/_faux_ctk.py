@@ -129,6 +129,16 @@ class FauxCanvasOrbe(FauxWidget):
         self.objets[identifiant] = dict(options, coords=coords)
         return identifiant
 
+    def create_arc(self, *coords, **options):
+        """Arc (jauges du thème stylé) : enregistré comme un ovale."""
+        identifiant = len(self.objets) + 1
+        self.objets[identifiant] = dict(options, coords=coords, arc=True)
+        return identifiant
+
+    def delete(self, etiquette):
+        if etiquette == "all":
+            self.objets = {}
+
     def coords(self, identifiant, *coords):
         self.objets[identifiant]["coords"] = coords
 

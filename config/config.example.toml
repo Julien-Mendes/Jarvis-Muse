@@ -143,10 +143,13 @@ active = true
 largeur = 900   # largeur de la fenêtre en pixels (640 à 1600)
 hauteur = 650   # hauteur de la fenêtre en pixels (480 à 1200)
 toujours_au_premier_plan = false
-# Thème des couleurs (U2) — trois choix :
+# Thème des couleurs (U2) — quatre choix :
 #   "or_et_nuit"   noir et or (défaut, choix de Julien)
 #   "jarvis_bleu"  les couleurs d'origine, fond sombre et accent bleu
 #   "clair_studio" fond clair, panneaux blancs, accent bleu
+#   "centre_de_commande"  bleu nuit et cyan façon « Command Center » : orbe
+#                  en globe filaire, panneaux bordés à titres en capitales,
+#                  statuts colorés, jauges des minuteurs (à l'essai)
 # Un nom inconnu, ou un fichier de configuration illisible : repli sur
 # "jarvis_bleu". Changer le thème = modifier cette ligne (config.toml ou
 # config.local.toml) puis relancer Jarvis ; pas encore de panneau Réglages.

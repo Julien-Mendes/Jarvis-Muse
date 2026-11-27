@@ -15,8 +15,11 @@ from pathlib import Path
 import _faux_ctk as faux
 
 EXEMPLE = faux.RACINE / "config" / "config.example.toml"
-THEMES_ATTENDUS = {"jarvis_bleu", "or_et_nuit", "clair_studio"}
-CLES_OPTIONNELLES = {"fond_fenetre", "champ_fond", "champ_bordure",
+THEMES_ATTENDUS = {"jarvis_bleu", "or_et_nuit", "clair_studio",
+                   "centre_de_commande"}
+# Thèmes sans « style » : présentation U1/U2 (disques, bouton plein).
+THEMES_CLASSIQUES = {"jarvis_bleu", "or_et_nuit", "clair_studio"}
+CLES_OPTIONNELLES = {"style", "fond_fenetre", "champ_fond", "champ_bordure",
                      "champ_texte", "champ_texte_indice"}
 
 
@@ -60,6 +63,8 @@ class Palettes(unittest.TestCase):
                         self.assertRegex(couleur, r"^#[0-9a-f]{6}$")
                 elif valeur is None:
                     self.assertIn(cle, CLES_OPTIONNELLES, f"{nom}.{cle}")
+                elif cle == "style":
+                    pass  # vérifié dans test_theme_commande.py
                 else:
                     self.assertRegex(valeur, r"^#[0-9a-f]{6}$", f"{nom}.{cle}")
 
@@ -98,7 +103,7 @@ class Palettes(unittest.TestCase):
         self.assertEqual(self.app.OPTIONS_CHAMP, {})
 
     def test_lisibilite_des_nouveaux_themes(self):
-        for nom in ("or_et_nuit", "clair_studio"):
+        for nom in ("or_et_nuit", "clair_studio", "centre_de_commande"):
             p = self.app.THEMES[nom]
             for surface in ("fond", "panneau", "bulle_jarvis",
                             "bulle_utilisateur"):
@@ -285,8 +290,10 @@ class ApplicationThemee(unittest.TestCase):
                                  p["barre_defilement"])
                 self.assertEqual(zone["scrollbar_button_hover_color"],
                                  p["barre_defilement_survol"])
-                # Boutons (Hold to talk, Interrupt, Send)
-                for bouton in (app.bouton_micro, app.bouton_envoyer):
+                # Boutons (Hold to talk, Interrupt, Send). Thème stylé : le
+                # micro est une pilule sombre (test_theme_commande.py).
+                for bouton in ((app.bouton_micro, app.bouton_envoyer)
+                               if not p["style"] else (app.bouton_envoyer,)):
                     self.assertEqual(bouton.options["fg_color"], p["accent"])
                     self.assertEqual(bouton.options["hover_color"],
                                      p["accent_survol"])
@@ -319,7 +326,7 @@ class ApplicationThemee(unittest.TestCase):
                                      p["texte_faible"])
 
     def test_orbe_aux_couleurs_du_theme(self):
-        for nom in THEMES_ATTENDUS:
+        for nom in THEMES_CLASSIQUES:  # globe : test_theme_commande.py
             with self.subTest(theme=nom):
                 module, _, app, _ = self.monter(nom)
                 p = module.THEMES[nom]
@@ -346,7 +353,8 @@ class ApplicationThemee(unittest.TestCase):
                                  p["texte_sur_accent"])
                 app._micro_relache()
                 self.assertEqual(app.bouton_micro.options["fg_color"],
-                                 p["accent"])
+                                 p["accent"] if not p["style"]
+                                 else p["style"]["micro_fond"])
 
     def test_fenetre_historique_suit_le_theme(self):
         for nom in THEMES_ATTENDUS:

@@ -35,10 +35,14 @@ Ce que montre la fenêtre :
     recherche), Ouvrir le guide, Quitter. Position et taille de la
     fenêtre mémorisées dans data/app.json.
 
-Thèmes (U2) : trois palettes — or_et_nuit (défaut), jarvis_bleu (repli) et
-clair_studio — choisies par [app] theme de la configuration. Un thème
-inconnu ou une configuration illisible donne jarvis_bleu. Le changement se
-fait par la configuration (pas encore de panneau Réglages).
+Thèmes (U2) : quatre palettes — or_et_nuit (défaut), jarvis_bleu (repli),
+clair_studio et centre_de_commande (lot esthétique : bleu nuit / cyan façon
+« Command Center », orbe en globe filaire, panneaux bordés à titres en
+capitales, statuts colorés, jauges des minuteurs, pastille d'état) —
+choisies par [app] theme de la configuration. Un thème inconnu ou une
+configuration illisible donne jarvis_bleu. Le changement se fait par la
+configuration (pas encore de panneau Réglages). Seul centre_de_commande a un
+« style » ; les trois autres gardent exactement la présentation U1/U2.
 
 Langue : les textes de la fenêtre principale suivent la langue de la
 boucle vocale — [boucle] langue de config.toml, ou le champ optionnel
@@ -165,6 +169,7 @@ THEMES = {
         "fond_fenetre": None,
         "champ_fond": None, "champ_bordure": None, "champ_texte": None,
         "champ_texte_indice": None,
+        "style": None,
     },
     "or_et_nuit": {
         "mode": "dark",
@@ -184,6 +189,7 @@ THEMES = {
         "fond_fenetre": "#09090b",
         "champ_fond": "#18181e", "champ_bordure": "#4a3d1c",
         "champ_texte": "#f2efe6", "champ_texte_indice": "#9a9484",
+        "style": None,
     },
     "clair_studio": {
         "mode": "light",
@@ -203,8 +209,55 @@ THEMES = {
         "fond_fenetre": "#f4f6f9",
         "champ_fond": "#ffffff", "champ_bordure": "#c3ccd9",
         "champ_texte": "#1b2330", "champ_texte_indice": "#53617a",
+        "style": None,
+    },
+    # Lot esthétique (suite de U2) : « Command Center » bleu nuit / cyan,
+    # d'après ref-visuel/jarvis-exemple.png. Seul thème avec un « style » :
+    # orbe en globe filaire, panneaux bordés de cyan à titres en capitales,
+    # statuts colorés, jauges circulaires des minuteurs, pastille d'état,
+    # bouton micro en pilule lumineuse. Les tailles du lot U1 ne changent pas.
+    "centre_de_commande": {
+        "mode": "dark",
+        "fond": "#050b16", "panneau": "#0a1628",
+        "bulle_jarvis": "#0d1f36", "bulle_utilisateur": "#0b3350",
+        "texte": "#e3f4ff", "texte_faible": "#8fb0cc",
+        "accent": "#22d3ee", "accent_survol": "#06b6d4",
+        "texte_sur_accent": "#03121f",
+        "barre_defilement": "#1f7096", "barre_defilement_survol": "#22d3ee",
+        "interrompre_texte": "#f87171", "interrompre_bordure": "#7f2d3a",
+        "interrompre_survol": "#2a0f16",
+        "survol_liste": "#10263f",
+        "orbe_fondu": "#0a1628",
+        "orbe": {"repos": "#38bdf8", "ecoute": "#22d3ee",
+                 "reflexion": "#a78bfa", "reponse": "#34d399",
+                 "erreur": "#f87171", "arrete": "#5b6b80"},
+        "fond_fenetre": "#050b16",
+        "champ_fond": "#081627", "champ_bordure": "#1c4f73",
+        "champ_texte": "#e3f4ff", "champ_texte_indice": "#6f8fae",
+        "style": {
+            "orbe": "globe",                 # « disque » : les 3 disques U1
+            "bordure_panneau": "#1c4f73",    # liseré cyan des panneaux
+            "titre_panneau": "#67e8f9",      # titres en capitales, cyan
+            "titres_majuscules": True,
+            # Bahnschrift (DIN, fournie avec Windows 10+) pour les titres,
+            # l'état et l'horloge ; Tk se rabat sur la police par défaut si
+            # elle manque. Le corps reste en Segoe UI.
+            "police_titre": "Bahnschrift",
+            "bordure_bulle_jarvis": "#16486a",
+            "bordure_bulle_utilisateur": "#1f7096",
+            "micro_fond": "#082a45",         # pilule sombre, contour cyan
+            "jauge_fond": "#12304a",         # piste des jauges circulaires
+            "statut": {"ok": "#34d399", "actif": "#22d3ee",
+                       "attente": "#fbbf24", "erreur": "#f87171",
+                       "inactif": "#5b6b80"},
+        },
     },
 }
+
+# Couleur de statut par état de la boucle (pastille d'état du thème stylé).
+STATUT_DES_ETATS = {"repos": "ok", "ecoute": "actif", "reflexion": "attente",
+                    "reponse": "actif", "erreur": "erreur",
+                    "arrete": "inactif"}
 
 # Couleurs actives : réglées par appliquer_theme() avant la création des
 # widgets (Application.__init__). Au simple import, ce sont celles du thème de
@@ -229,6 +282,8 @@ COULEUR_FOND_FENETRE = THEMES[THEME_REPLI]["fond_fenetre"]
 MODE_APPARENCE = THEMES[THEME_REPLI]["mode"]
 OPTIONS_CHAMP: dict = {}
 THEME_ACTIF = THEME_REPLI
+# Style du thème (vide = présentation classique U1/U2, inchangée).
+STYLE: dict = {}
 
 ETATS = {
     # état : (texte affiché, couleur de l'orbe, période de pulsation en s)
@@ -262,7 +317,7 @@ def appliquer_theme(nom) -> str:
     global COULEUR_INTERROMPRE_TEXTE, COULEUR_INTERROMPRE_BORDURE
     global COULEUR_INTERROMPRE_SURVOL, COULEUR_SURVOL_LISTE
     global COULEUR_ORBE_FONDU, COULEUR_FOND_FENETRE, MODE_APPARENCE
-    global OPTIONS_CHAMP, THEME_ACTIF
+    global OPTIONS_CHAMP, THEME_ACTIF, STYLE
     effectif = nom_theme(nom)
     if isinstance(nom, str) and nom.strip().lower() != effectif:
         print(f"Avertissement application : thème « {nom} » inconnu ; "
@@ -296,8 +351,38 @@ def appliquer_theme(nom) -> str:
     for etat, couleur in palette["orbe"].items():
         texte, _ancienne, periode = ETATS[etat]
         ETATS[etat] = (texte, couleur, periode)
+    STYLE = dict(palette.get("style") or {})
     THEME_ACTIF = effectif
     return effectif
+
+
+def options_tuile() -> dict:
+    """Ligne d'une liste (minuteur, recherche, note) : tuile sombre bordée
+    dans le thème stylé, comme les éléments de la référence ; transparente
+    sinon."""
+    if STYLE.get("bordure_panneau"):
+        return {"fg_color": COULEUR_FOND, "corner_radius": 8,
+                "border_width": 1, "border_color": STYLE["bordure_panneau"]}
+    return {"fg_color": "transparent"}
+
+
+def couleur_statut(cle: str, repli: str) -> str:
+    """Couleur de statut du thème stylé (« ok », « actif », « attente »,
+    « erreur », « inactif ») ; `repli` pour les thèmes classiques."""
+    return (STYLE.get("statut") or {}).get(cle, repli)
+
+
+def titre_affiche(texte: str) -> str:
+    """Titre de panneau : en capitales dans le thème stylé."""
+    return texte.upper() if STYLE.get("titres_majuscules") else texte
+
+
+def options_panneau() -> dict:
+    """Options d'un panneau : liseré cyan dans le thème stylé, aucune option
+    en plus sinon (panneaux U2 identiques)."""
+    if STYLE.get("bordure_panneau"):
+        return {"border_width": 1, "border_color": STYLE["bordure_panneau"]}
+    return {}
 FRAICHEUR_PTT = 2.0  # secondes : un fichier PTT plus vieux est périmé.
 
 # Mise en page (lot U1 : polissage ; les couleurs ne changent pas).
@@ -356,6 +441,12 @@ TEXTES = {
         "recherche_fenetre": "Recherche — Jarvis",
         "recherche_sources": "Sources",
         "recherche_attente": "Pas encore de réponse : la recherche est {statut}.",
+        "pastille_repos": "● EN LIGNE",
+        "pastille_ecoute": "● ÉCOUTE",
+        "pastille_reflexion": "● ANALYSE",
+        "pastille_reponse": "● RÉPONSE",
+        "pastille_erreur": "● ERREUR",
+        "pastille_arrete": "● HORS LIGNE",
         "connaissances": "Connaissances",
         "aucune_note": "Aucune note.\nDites « note que… » pour en ajouter une.",
         "supprimer_note": "Supprimer cette note",
@@ -401,6 +492,12 @@ TEXTES = {
         "recherche_fenetre": "Research — Jarvis",
         "recherche_sources": "Sources",
         "recherche_attente": "No answer yet: the research is {statut}.",
+        "pastille_repos": "● ONLINE",
+        "pastille_ecoute": "● LISTENING",
+        "pastille_reflexion": "● THINKING",
+        "pastille_reponse": "● ANSWERING",
+        "pastille_erreur": "● ERROR",
+        "pastille_arrete": "● OFFLINE",
         "connaissances": "Knowledge",
         "aucune_note": "No notes.\nSay “note that…” to add one.",
         "supprimer_note": "Delete this note",
@@ -540,13 +637,30 @@ def charger_minuteurs(chemin: Path = FICHIER_MINUTEURS) -> list:
         due = _analyser_echeance(minuteur.get("due"))
         if due is None:
             continue
+        # Durée totale (jauge du thème stylé) : de la création à l'échéance ;
+        # None si inconnue (ancien fichier).
+        cree = _analyser_echeance(minuteur.get("created"))
+        total = (due - cree).total_seconds() if cree is not None else None
         resultat.append({
             "due": due,
             "label": str(minuteur.get("label", "")),
             "kind": str(minuteur.get("kind", "timer")),
+            "total_s": total if total and total > 0 else None,
         })
     resultat.sort(key=lambda m: m["due"])
     return resultat
+
+
+def etat_jauge_minuteur(minuteur: dict, ref: datetime) -> tuple:
+    """(fraction restante 0..1, clé de statut) d'un minuteur, pour sa jauge :
+    « erreur » échu, « attente » dans la dernière minute, « actif » sinon.
+    Sans durée totale connue, la jauge est pleine."""
+    reste = (minuteur["due"] - ref).total_seconds()
+    if reste < 0:
+        return 0.0, "erreur"
+    total = minuteur.get("total_s")
+    fraction = min(1.0, reste / total) if total else 1.0
+    return fraction, "attente" if reste < 60 else "actif"
 
 
 MAX_RECHERCHES_PANNEAU = 6
@@ -607,6 +721,19 @@ def formater_notes(notes: list, langue: str = "fr") -> tuple:
         (recherche_mod.texte_parle(n["texte"], 90),
          connaissances_mod.formater_date(str(n.get("cree_le", "")), langue))
         for n in notes[:MAX_NOTES_PANNEAU])
+
+
+TAILLE_JAUGE = 22                  # jauge circulaire d'un minuteur (px)
+
+
+def statut_recherche(tache: dict) -> str:
+    """Clé de statut (couleur) d'une recherche : prête « ok », en cours
+    « actif », en file « attente », échec « erreur »."""
+    if tache.get("statut") == "prete":
+        return "ok"
+    if tache.get("statut") == "echec":
+        return "erreur"
+    return "actif" if tache.get("demarree_le") else "attente"
 
 
 def formater_compte_a_rebours(secondes: float, langue: str = "fr") -> str:
@@ -788,12 +915,16 @@ def ecrire_demande_texte(chemin: Path, texte: str) -> None:
 _POLICES: dict = {}
 
 
-def _police(taille: int, gras: bool = False):
+def _police(taille: int, gras: bool = False, titre: bool = False):
     """Police Segoe UI partagée : une seule par (taille, graisse), au lieu
-    d'une par étiquette (la conversation compte jusqu'à 200 bulles)."""
-    cle = (taille, gras)
+    d'une par étiquette (la conversation compte jusqu'à 200 bulles).
+
+    `titre` : police des titres du thème stylé (Bahnschrift) — mêmes tailles
+    que le lot U1 ; Segoe UI dans les thèmes classiques."""
+    famille = (STYLE.get("police_titre") if titre else None) or "Segoe UI"
+    cle = (taille, gras, famille)
     if cle not in _POLICES:
-        _POLICES[cle] = ctk.CTkFont(family="Segoe UI", size=taille,
+        _POLICES[cle] = ctk.CTkFont(family=famille, size=taille,
                                     weight="bold" if gras else "normal")
     return _POLICES[cle]
 
@@ -817,8 +948,12 @@ def ajouter_bulle(conteneur, entree: dict, wraplength: int,
         marges = (MARGE_BULLE_PROCHE, MARGE_BULLE_LOIN)
     interlocuteur_change = (role_precedent is not None
                             and role_precedent != entree["role"])
+    # Thème stylé : liseré fin autour des bulles (comme les panneaux).
+    bordure = STYLE.get("bordure_bulle_utilisateur" if entree["role"] == "user"
+                        else "bordure_bulle_jarvis")
+    options = {"border_width": 1, "border_color": bordure} if bordure else {}
     cadre = ctk.CTkFrame(conteneur, fg_color=couleur_bulle,
-                         corner_radius=RAYON_BULLE)
+                         corner_radius=RAYON_BULLE, **options)
     cadre.pack(anchor=ancre, padx=marges,
                pady=(10 if interlocuteur_change else 3, 3))
     heure = formater_heure(entree["heure"])
@@ -889,6 +1024,69 @@ def _fondre(couleur_hex: str, fond_hex: str, facteur: float) -> str:
         return couleur_hex
     mix = [int(c[i] * facteur + f[i] * (1.0 - facteur)) for i in range(3)]
     return f"#{mix[0]:02x}{mix[1]:02x}{mix[2]:02x}"
+
+
+# ---------------------------------------------------------------------------
+# Orbe en globe filaire (thème stylé) — géométrie pure, testable sans écran
+# ---------------------------------------------------------------------------
+
+GLOBE_RAYON = 38                   # sphère (échelle 1,0) ; halo : ORBE_RAYONS[0]
+GLOBE_MERIDIENS = 4                # ellipses verticales qui tournent
+GLOBE_PARALLELES = (-50, -25, 0, 25, 50)   # latitudes (degrés)
+GLOBE_INCLINAISON = 0.24           # aplatissement des parallèles (vue de biais)
+GLOBE_ORBITE = (1.34, 0.30)        # anneau d'orbite : (rx, ry) / rayon (satellite compris, tient dans 116 px)
+GLOBE_COEUR = 4                    # point central
+
+
+def geometrie_globe(echelle: float, angle: float) -> dict:
+    """Coordonnées (x0, y0, x1, y1) des éléments du globe, centrées dans le
+    canevas de l'orbe (ORBE_TAILLE, inchangé). `angle` (radians) fait
+    tourner les méridiens et le satellite. Tout tient dans le canevas."""
+    c = ORBE_CENTRE
+    r = GLOBE_RAYON * echelle
+
+    def boite(cx, cy, rx, ry):
+        return (cx - rx, cy - ry, cx + rx, cy + ry)
+
+    meridiens = []
+    for k in range(GLOBE_MERIDIENS):
+        phi = angle + k * math.pi / GLOBE_MERIDIENS
+        meridiens.append(boite(c, c, max(0.6, r * abs(math.cos(phi))), r))
+    paralleles = []
+    for latitude in GLOBE_PARALLELES:
+        lat = math.radians(latitude)
+        rx = r * math.cos(lat)
+        cy = c - r * math.sin(lat) * math.cos(GLOBE_INCLINAISON * math.pi / 2)
+        paralleles.append(boite(c, cy, rx, max(0.6, rx * GLOBE_INCLINAISON)))
+    orx, ory = GLOBE_ORBITE[0] * r, GLOBE_ORBITE[1] * r
+    sx = c + orx * math.cos(angle * 0.7)
+    sy = c + ory * math.sin(angle * 0.7)
+    return {
+        "halo": boite(c, c, ORBE_RAYONS[0] * echelle, ORBE_RAYONS[0] * echelle),
+        "sphere": boite(c, c, r, r),
+        "coeur": boite(c, c, GLOBE_COEUR, GLOBE_COEUR),
+        "meridiens": meridiens,
+        "paralleles": paralleles,
+        "orbite": boite(c, c, orx, ory),
+        "satellite": boite(sx, sy, 2.5, 2.5),
+    }
+
+
+def dessiner_jauge(canevas, taille: int, fraction: float, couleur: str,
+                   piste: str, epaisseur: int = 3) -> None:
+    """Jauge circulaire (piste + arc de `fraction`, de 0 à 1, sens horaire
+    depuis midi) sur un petit canevas carré."""
+    fraction = max(0.0, min(1.0, float(fraction)))
+    m = epaisseur + 1
+    canevas.create_oval(m, m, taille - m, taille - m, outline=piste,
+                        width=epaisseur)
+    if fraction >= 0.999:
+        canevas.create_oval(m, m, taille - m, taille - m, outline=couleur,
+                            width=epaisseur)
+    elif fraction > 0:
+        canevas.create_arc(m, m, taille - m, taille - m, start=90,
+                           extent=-360 * fraction, style="arc",
+                           outline=couleur, width=epaisseur)
 
 
 # ---------------------------------------------------------------------------
@@ -971,6 +1169,7 @@ class Application:
         self.etat_affiche = "arrete"
         self._entrees_affichees: list = []
         self._texte_minuteurs: tuple = ()
+        self._tuiles_minuteurs: list = []  # thème stylé : (texte, jauge)
         self._cle_recherches: tuple = ()
         self._micro_enfonce = False
         self._etiquettes_bulles: list = []
@@ -1022,15 +1221,23 @@ class Application:
             bg=COULEUR_PANNEAU, highlightthickness=0, bd=0)
         self.canvas_orbe.grid(row=0, column=0, rowspan=2,
                               padx=(20, 6), pady=12)
-        (self._orbe_halo, self._orbe_milieu,
-         self._orbe_coeur) = (
-            self.canvas_orbe.create_oval(
-                ORBE_CENTRE - r, ORBE_CENTRE - r,
-                ORBE_CENTRE + r, ORBE_CENTRE + r, fill="", outline="")
-            for r in ORBE_RAYONS)
+        # Thème stylé : globe filaire (même canevas de 116 px) ; sinon les
+        # trois disques du lot U1.
+        self._globe: dict | None = None
+        self._angle_globe = 0.6  # radians ; fixe au repos (aucun dessin).
+        if STYLE.get("orbe") == "globe":
+            self._creer_globe()
+        else:
+            (self._orbe_halo, self._orbe_milieu,
+             self._orbe_coeur) = (
+                self.canvas_orbe.create_oval(
+                    ORBE_CENTRE - r, ORBE_CENTRE - r,
+                    ORBE_CENTRE + r, ORBE_CENTRE + r, fill="", outline="")
+                for r in ORBE_RAYONS)
 
         self.texte_etat = ctk.CTkLabel(
-            self.entete, text=self.t("etat_arrete"), font=_police(20, True),
+            self.entete, text=self.t("etat_arrete"),
+            font=_police(20, True, titre=True),
             text_color=COULEUR_TEXTE, anchor="w")
         self.texte_etat.grid(row=0, column=1, sticky="sw", padx=10,
                              pady=(0, 2))
@@ -1042,9 +1249,24 @@ class Application:
                                pady=(2, 0))
 
         self.texte_horloge = ctk.CTkLabel(
-            self.entete, text="--:--:--", font=_police(24, True),
+            self.entete, text="--:--:--", font=_police(24, True, titre=True),
             text_color=COULEUR_TEXTE)
-        self.texte_horloge.grid(row=0, column=2, rowspan=2, padx=24, pady=12)
+        # Thème stylé : pastille d'état colorée (« ● EN LIGNE ») au-dessus de
+        # l'horloge, comme « SYSTEM STATUS ● OPTIMAL » de la référence.
+        self.pastille_etat = None
+        if STYLE:
+            self.pastille_etat = ctk.CTkLabel(
+                self.entete, text="", font=_police(11, True, titre=True),
+                fg_color=COULEUR_FOND, corner_radius=10, height=22,
+                text_color=couleur_statut("inactif", COULEUR_TEXTE_FAIBLE))
+            self.pastille_etat.grid(row=0, column=2, sticky="s", padx=24,
+                                    pady=(12, 0))
+            self.texte_horloge.grid(row=1, column=2, sticky="n", padx=24,
+                                    pady=(2, 12))
+            self._maj_pastille()
+        else:
+            self.texte_horloge.grid(row=0, column=2, rowspan=2, padx=24,
+                                    pady=12)
 
         # -- Zone centrale : conversation + minuteurs -------------------
         self.centre = ctk.CTkFrame(self.fenetre, fg_color=COULEUR_FOND,
@@ -1078,13 +1300,16 @@ class Application:
             "<Configure>", self._sur_redimensionnement, add="+")
 
         self.panneau_minuteurs = ctk.CTkFrame(
-            self.centre, fg_color=COULEUR_PANNEAU, corner_radius=12)
+            self.centre, fg_color=COULEUR_PANNEAU, corner_radius=12,
+            **options_panneau())
         self.panneau_minuteurs.grid(row=0, column=1, sticky="new",
                                     padx=8, pady=(8, 4))
         self.panneau_minuteurs.configure(width=230)
         self.titre_minuteurs = ctk.CTkLabel(
-            self.panneau_minuteurs, text=self.t("minuteurs"),
-            font=_police(14, True), text_color=COULEUR_TEXTE, anchor="w")
+            self.panneau_minuteurs, text=self._titre("minuteurs"),
+            font=_police(14, True, titre=True),
+            text_color=STYLE.get("titre_panneau") or COULEUR_TEXTE,
+            anchor="w")
         self.titre_minuteurs.pack(fill="x", padx=12, pady=(10, 2))
         self.conteneur_minuteurs = ctk.CTkFrame(
             self.panneau_minuteurs, fg_color="transparent")
@@ -1097,13 +1322,16 @@ class Application:
         self.centre.grid_rowconfigure(1, weight=0)
         self.centre.grid_rowconfigure(2, weight=1)
         self.panneau_recherches = ctk.CTkFrame(
-            self.centre, fg_color=COULEUR_PANNEAU, corner_radius=12)
+            self.centre, fg_color=COULEUR_PANNEAU, corner_radius=12,
+            **options_panneau())
         self.panneau_recherches.grid(row=1, column=1, sticky="new",
                                      padx=8, pady=4)
         self.panneau_recherches.configure(width=230)
         self.titre_recherches = ctk.CTkLabel(
-            self.panneau_recherches, text=self.t("recherches"),
-            font=_police(14, True), text_color=COULEUR_TEXTE, anchor="w")
+            self.panneau_recherches, text=self._titre("recherches"),
+            font=_police(14, True, titre=True),
+            text_color=STYLE.get("titre_panneau") or COULEUR_TEXTE,
+            anchor="w")
         self.titre_recherches.pack(fill="x", padx=12, pady=(10, 2))
         self.conteneur_recherches = ctk.CTkFrame(
             self.panneau_recherches, fg_color="transparent")
@@ -1113,13 +1341,16 @@ class Application:
         # + date) et suppression confirmée. Liste défilante à elle : la
         # conversation garde son propre défilement (U2), inchangé.
         self.panneau_connaissances = ctk.CTkFrame(
-            self.centre, fg_color=COULEUR_PANNEAU, corner_radius=12)
+            self.centre, fg_color=COULEUR_PANNEAU, corner_radius=12,
+            **options_panneau())
         self.panneau_connaissances.grid(row=2, column=1, sticky="nsew",
                                         padx=8, pady=(4, 8))
         self.panneau_connaissances.configure(width=230)
         self.titre_connaissances = ctk.CTkLabel(
-            self.panneau_connaissances, text=self.t("connaissances"),
-            font=_police(14, True), text_color=COULEUR_TEXTE, anchor="w")
+            self.panneau_connaissances, text=self._titre("connaissances"),
+            font=_police(14, True, titre=True),
+            text_color=STYLE.get("titre_panneau") or COULEUR_TEXTE,
+            anchor="w")
         self.titre_connaissances.pack(fill="x", padx=12, pady=(10, 2))
         self.conteneur_connaissances = ctk.CTkScrollableFrame(
             self.panneau_connaissances, fg_color=COULEUR_PANNEAU,
@@ -1138,13 +1369,16 @@ class Application:
         self.barre_bas.grid_columnconfigure(0, weight=1)
 
         self.bouton_micro = ctk.CTkButton(
-            self.barre_bas, text=self.t("micro_repos"), font=_police(16, True),
+            self.barre_bas, text=self.t("micro_repos"),
+            font=_police(16, True, titre=True),
             fg_color=COULEUR_ACCENT, hover_color=COULEUR_ACCENT_SURVOL,
             text_color=COULEUR_TEXTE_SUR_ACCENT,
             corner_radius=HAUTEUR_BOUTON_PRINCIPAL // 2,
             height=HAUTEUR_BOUTON_PRINCIPAL)
         self.bouton_micro.grid(row=0, column=0, sticky="ew",
                                padx=(16, 8), pady=(12, 4))
+        if STYLE:  # pilule sombre au contour cyan (« TALK TO JARVIS »).
+            self._style_micro(False)
         self.bouton_micro.bind("<ButtonPress-1>", self._micro_presse)
         self.bouton_micro.bind("<ButtonRelease-1>", self._micro_relache)
 
@@ -1191,6 +1425,10 @@ class Application:
         """Texte de l'interface dans la langue courante."""
         return _texte(self.langue, cle)
 
+    def _titre(self, cle: str) -> str:
+        """Titre de panneau (en capitales dans le thème stylé)."""
+        return titre_affiche(self.t(cle))
+
     def _appliquer_langue(self) -> None:
         """Applique la langue courante aux textes fixes de la fenêtre. Les
         textes d'état, de minuteurs et la conversation se rafraîchissent
@@ -1213,11 +1451,12 @@ class Application:
                 1, label=self.t("menu_guide")),
             lambda: self._menu_fichier.entryconfigure(
                 3, label=self.t("menu_quitter")),
-            lambda: self.titre_minuteurs.configure(text=self.t("minuteurs")),
+            lambda: self.titre_minuteurs.configure(
+                text=self._titre("minuteurs")),
             lambda: self.titre_recherches.configure(
-                text=self.t("recherches")),
+                text=self._titre("recherches")),
             lambda: self.titre_connaissances.configure(
-                text=self.t("connaissances")),
+                text=self._titre("connaissances")),
             lambda: self.bouton_interrompre.configure(
                 text=self.t("interrompre")),
             lambda: self.texte_astuce.configure(text=self.t("astuce")),
@@ -1225,6 +1464,7 @@ class Application:
             lambda: self.champ_texte.configure(
                 placeholder_text=self.t("placeholder")),
             lambda: self._style_micro(self._micro_enfonce),
+            self._maj_pastille,
             message_vide,
             vider_minuteurs,
         )
@@ -1237,8 +1477,74 @@ class Application:
 
     # -- Orbe ----------------------------------------------------------
 
+    def _maj_pastille(self) -> None:
+        """Pastille d'état du thème stylé : texte et couleur de statut."""
+        if self.pastille_etat is None:
+            return
+        etat = self.etat_affiche
+        self.pastille_etat.configure(
+            text=self.t(f"pastille_{etat}"),
+            text_color=couleur_statut(STATUT_DES_ETATS.get(etat, "inactif"),
+                                      COULEUR_TEXTE_FAIBLE))
+
+    def _creer_globe(self) -> None:
+        """Crée les éléments du globe filaire (thème stylé), une fois pour
+        toutes : ensuite on ne fait que déplacer et recolorer (coords,
+        itemconfig), jamais recréer. Dessinés du fond vers l'avant."""
+        canvas = self.canvas_orbe
+
+        def ovale(largeur=1):
+            return canvas.create_oval(0, 0, 0, 0, fill="", outline="",
+                                      width=largeur)
+
+        halo = ovale()
+        sphere = ovale(2)
+        paralleles = [ovale() for _ in GLOBE_PARALLELES]
+        meridiens = [ovale() for _ in range(GLOBE_MERIDIENS)]
+        orbite = ovale()
+        coeur = ovale()
+        satellite = ovale()
+        self._globe = {"halo": halo, "sphere": sphere,
+                       "paralleles": paralleles, "meridiens": meridiens,
+                       "orbite": orbite, "coeur": coeur,
+                       "satellite": satellite}
+        # Mêmes noms que l'orbe U1 (halo, milieu, cœur).
+        self._orbe_halo, self._orbe_milieu, self._orbe_coeur = (
+            halo, sphere, coeur)
+
+    def _dessiner_globe(self, echelle: float) -> None:
+        """Place et colore le globe filaire selon l'état et l'angle courant."""
+        couleur = ETATS[self.etat_affiche][1]
+        fond = COULEUR_ORBE_FONDU
+        g = self._globe
+        geo = geometrie_globe(echelle, self._angle_globe)
+        canvas = self.canvas_orbe
+        canvas.coords(g["halo"], *geo["halo"])
+        canvas.itemconfig(g["halo"], fill=_fondre(couleur, fond, 0.10),
+                          outline=_fondre(couleur, fond, 0.35))
+        canvas.coords(g["sphere"], *geo["sphere"])
+        canvas.itemconfig(g["sphere"], fill=_fondre(couleur, fond, 0.16),
+                          outline=couleur)
+        trait_parallele = _fondre(couleur, fond, 0.45)
+        for item, boite in zip(g["paralleles"], geo["paralleles"]):
+            canvas.coords(item, *boite)
+            canvas.itemconfig(item, outline=trait_parallele)
+        trait_meridien = _fondre(couleur, fond, 0.60)
+        for item, boite in zip(g["meridiens"], geo["meridiens"]):
+            canvas.coords(item, *boite)
+            canvas.itemconfig(item, outline=trait_meridien)
+        canvas.coords(g["orbite"], *geo["orbite"])
+        canvas.itemconfig(g["orbite"], outline=_fondre(couleur, fond, 0.80))
+        canvas.coords(g["coeur"], *geo["coeur"])
+        canvas.itemconfig(g["coeur"], fill=couleur, outline="")
+        canvas.coords(g["satellite"], *geo["satellite"])
+        canvas.itemconfig(g["satellite"], fill=couleur, outline="")
+
     def _dessiner_orbe(self, echelle: float) -> None:
         """Redessine l'orbe (halo + milieu + cœur) à l'échelle donnée."""
+        if self._globe is not None:
+            self._dessiner_globe(echelle)
+            return
         couleur = ETATS[self.etat_affiche][1]
         for item, rayon, facteur in zip(
                 (self._orbe_halo, self._orbe_milieu, self._orbe_coeur),
@@ -1263,6 +1569,9 @@ class Application:
         try:
             periode = ETATS[self.etat_affiche][2]
             if periode > 0:
+                if self._globe is not None:
+                    # Le globe tourne (un tour en ~7 s) pendant qu'il pulse.
+                    self._angle_globe = (time.monotonic() * 0.9) % (2 * math.pi)
                 phase = (time.monotonic() % periode) / periode
                 self._dessiner_orbe(1.0 + 0.07 * math.sin(2 * math.pi * phase))
                 delai = PAS_ANIMATION_MS
@@ -1434,16 +1743,62 @@ class Application:
     def _rafraichir_minuteurs(self, minuteurs: list, ref: datetime) -> None:
         """Reconstruit le panneau minuteurs seulement si le texte change."""
         lignes = formater_minuteurs(minuteurs, ref, self.langue)
-        if lignes == self._texte_minuteurs:
+        jauges = (tuple(etat_jauge_minuteur(m, ref) for m in minuteurs)
+                  if STYLE else ())
+        # Jauges arrondies au 1/24 de tour : on ne redessine pas à chaque
+        # seconde pour un changement invisible.
+        cle = (lignes, tuple((round(f * 24), s) for f, s in jauges))
+        if cle == self._texte_minuteurs:
             return
-        self._texte_minuteurs = lignes
+        self._texte_minuteurs = cle
+        if (STYLE and minuteurs
+                and len(self._tuiles_minuteurs) == len(minuteurs)):
+            # Même nombre de minuteurs : texte et jauge mis à jour sur place
+            # (le compte à rebours change chaque seconde ; rien n'est recréé).
+            for (etiquette, jauge), ligne, etat in zip(
+                    self._tuiles_minuteurs, lignes, jauges):
+                self._remplir_tuile_minuteur(etiquette, jauge, ligne, *etat)
+            return
+        self._tuiles_minuteurs = []
         for enfant in self.conteneur_minuteurs.winfo_children():
             enfant.destroy()
+        if STYLE and minuteurs:
+            self._lignes_minuteurs_stylees(lignes, jauges)
+            return
         for ligne in lignes:
             ctk.CTkLabel(
                 self.conteneur_minuteurs, text=ligne, font=_police(12),
                 text_color=COULEUR_TEXTE, anchor="w",
                 justify="left").pack(fill="x", padx=8, pady=2)
+
+    def _lignes_minuteurs_stylees(self, lignes: tuple, jauges: tuple) -> None:
+        """Thème stylé : une jauge circulaire par minuteur (temps restant,
+        couleur de statut) devant son texte, sans la puce « • »."""
+        for ligne, (fraction, statut) in zip(lignes, jauges):
+            rangee = ctk.CTkFrame(self.conteneur_minuteurs, **options_tuile())
+            rangee.pack(fill="x", padx=6, pady=2)
+            jauge = tk.Canvas(rangee, width=TAILLE_JAUGE, height=TAILLE_JAUGE,
+                              bg=COULEUR_FOND, highlightthickness=0, bd=0)
+            jauge.pack(side="left", padx=(6, 6), pady=4)
+            etiquette = ctk.CTkLabel(
+                rangee, text="", font=_police(12), anchor="w",
+                justify="left", height=24)
+            etiquette.pack(side="left", fill="x", padx=(0, 8), pady=4)
+            self._remplir_tuile_minuteur(etiquette, jauge, ligne, fraction,
+                                         statut)
+            self._tuiles_minuteurs.append((etiquette, jauge))
+
+    def _remplir_tuile_minuteur(self, etiquette, jauge, ligne: str,
+                                fraction: float, statut: str) -> None:
+        """Texte (rouge si échu) et jauge d'une tuile de minuteur."""
+        etiquette.configure(
+            text=ligne.removeprefix("• "),
+            text_color=(couleur_statut("erreur", COULEUR_TEXTE)
+                        if statut == "erreur" else COULEUR_TEXTE))
+        jauge.delete("all")
+        dessiner_jauge(jauge, TAILLE_JAUGE, fraction,
+                       couleur_statut(statut, COULEUR_ACCENT),
+                       STYLE.get("jauge_fond", COULEUR_FOND))
 
     # -- Recherches (lot R1) -------------------------------------------
 
@@ -1464,12 +1819,32 @@ class Application:
                 justify="left").pack(fill="x", padx=8, pady=2)
             return
         for ligne, tache in zip(lignes, recherches):
+            if STYLE:
+                # Thème stylé : point de statut coloré, puis la ligne.
+                rangee = ctk.CTkFrame(self.conteneur_recherches,
+                                      **options_tuile())
+                rangee.pack(fill="x", padx=6, pady=2)
+                ctk.CTkLabel(
+                    rangee, text="●", font=_police(12), width=14, height=22,
+                    text_color=couleur_statut(statut_recherche(tache),
+                                              COULEUR_TEXTE)
+                ).pack(side="left", padx=(8, 0), pady=4)
+                # Plus court qu'en classique : le point prend de la place.
+                texte_ligne = (
+                    recherche_mod.texte_parle(tache.get("question", ""), 30)
+                    + " — " + recherche_mod.etiquette_statut(tache,
+                                                             self.langue))
+                parent, placement = rangee, {"padx": (0, 6), "pady": 4}
+            else:
+                parent, texte_ligne = self.conteneur_recherches, ligne
+                placement = {"padx": 4, "pady": 1}
             ctk.CTkButton(
-                self.conteneur_recherches, text=ligne, font=_police(12),
+                parent, text=texte_ligne, font=_police(12),
                 fg_color="transparent", hover_color=COULEUR_SURVOL_LISTE,
-                text_color=COULEUR_TEXTE, anchor="w", height=26,
+                text_color=COULEUR_TEXTE, anchor="w",
+                height=22 if STYLE else 26,
                 command=lambda t=tache: self.ouvrir_recherche(t)
-            ).pack(fill="x", padx=4, pady=1)
+            ).pack(fill="x", **placement)
 
     def ouvrir_recherche(self, tache: dict) -> None:
         """Fenêtre de lecture d'une recherche : question, statut, réponse
@@ -1541,17 +1916,21 @@ class Application:
             return
         for (texte_note, date), note in zip(lignes, notes):
             ligne = ctk.CTkFrame(self.conteneur_connaissances,
-                                 fg_color="transparent")
+                                 **options_tuile())
             ligne.pack(fill="x", padx=2, pady=2)
             ligne.grid_columnconfigure(0, weight=1)
+            marge = (8, 2) if STYLE else (6, 2)  # hors du liseré de la tuile
             ctk.CTkLabel(
                 ligne, text=texte_note, font=_police(12),
                 text_color=COULEUR_TEXTE, anchor="w", justify="left",
-                wraplength=150).grid(row=0, column=0, sticky="w", padx=(6, 2))
+                wraplength=150).grid(row=0, column=0, sticky="w", padx=marge,
+                                     pady=(4, 0) if STYLE else 0)
             ctk.CTkLabel(
                 ligne, text=date, font=_police(10),
-                text_color=COULEUR_TEXTE_FAIBLE, anchor="w"
-            ).grid(row=1, column=0, sticky="w", padx=(6, 2))
+                text_color=STYLE.get("titre_panneau") or COULEUR_TEXTE_FAIBLE,
+                anchor="w"
+            ).grid(row=1, column=0, sticky="w", padx=marge,
+                   pady=(0, 4) if STYLE else 0)
             arme = self._note_a_confirmer == note["id"]
             ctk.CTkButton(
                 ligne, text=self.t("confirmer_suppression") if arme else "✕",
@@ -1605,9 +1984,18 @@ class Application:
         if enfonce:
             couleur = ETATS["ecoute"][1]
             self.bouton_micro.configure(
-                text=self.t("micro_actif"), fg_color=couleur,
+                text=titre_affiche(self.t("micro_actif")), fg_color=couleur,
                 hover_color=couleur, border_width=2,
                 border_color=COULEUR_TEXTE)
+            if STYLE:
+                self.bouton_micro.configure(text_color=COULEUR_TEXTE_SUR_ACCENT)
+        elif STYLE:
+            # Thème stylé : pilule sombre, contour et texte cyan.
+            self.bouton_micro.configure(
+                text=titre_affiche(self.t("micro_repos")),
+                fg_color=STYLE.get("micro_fond", COULEUR_PANNEAU),
+                hover_color=COULEUR_SURVOL_LISTE, border_width=2,
+                border_color=COULEUR_ACCENT, text_color=COULEUR_ACCENT)
         else:
             self.bouton_micro.configure(
                 text=self.t("micro_repos"), fg_color=COULEUR_ACCENT,
@@ -1887,6 +2275,7 @@ class Application:
                 self.texte_etat.configure(text=texte_etat)
                 self.texte_detail.configure(text=detail)
                 self._dessiner_orbe(1.0)
+                self._maj_pastille()
 
             # Horloge (redessinée seulement quand la seconde change).
             horloge = maintenant.strftime("%H:%M:%S")
