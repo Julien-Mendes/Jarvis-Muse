@@ -1354,6 +1354,29 @@ def _police(taille: int, gras: bool = False, titre: bool = False):
     return _POLICES[cle]
 
 
+def echelle_widget(widget) -> float:
+    """Facteur d'échelle CustomTkinter du widget (1,25 sur un écran Windows
+    à 125 %) ; 1,0 si illisible."""
+    try:
+        echelle = float(ctk.ScalingTracker.get_widget_scaling(widget))
+        return echelle if echelle > 0 else 1.0
+    except Exception:
+        return 1.0
+
+
+def largeur_bulle_logique(largeur_px: int, echelle: float = 1.0) -> int:
+    """Largeur de retour à la ligne d'une bulle, en unités CustomTkinter.
+
+    `largeur_px` vient de winfo_width() : des pixels RÉELS. CustomTkinter
+    multiplie ensuite `wraplength` (et les marges padx) par l'échelle de
+    l'écran. Sans diviser d'abord par cette échelle, le texte se repliait
+    1,25 fois trop large à 125 % : la fin de chaque ligne sortait de la
+    bulle et était coupée par le bord, en plein mot (correctif bulles)."""
+    if not echelle or echelle <= 0:
+        echelle = 1.0
+    return max(240, int(largeur_px / echelle) - RESERVE_LARGEUR_BULLE)
+
+
 def ajouter_bulle(conteneur, entree: dict, wraplength: int,
                   role_precedent: str | None = None):
     """Crée une bulle (utilisateur à droite, Jarvis à gauche) dans un
@@ -1601,6 +1624,8 @@ class Application:
         self._etiquettes_bulles: list = []
         self._apres_redimensionnement = None
         self._apres_geometrie = None
+        self._apres_redim_historique = None
+        self._etiquettes_historique: list = []
         self._derniere_largeur = 0
         self._horloge_affichee = ""
         self._message_vide = None
@@ -2192,12 +2217,14 @@ class Application:
         self._entrees_affichees.append(entree)
 
     def _largeur_bulle(self) -> int:
-        """Largeur de retour à la ligne des bulles, selon la fenêtre."""
+        """Largeur de retour à la ligne des bulles, selon la fenêtre, en
+        unités CustomTkinter (voir `largeur_bulle_logique`)."""
         try:
             largeur = self.zone_conversation.winfo_width()
         except Exception:
             largeur = 600
-        return max(240, largeur - RESERVE_LARGEUR_BULLE)
+        return largeur_bulle_logique(
+            largeur, echelle_widget(self.zone_conversation))
 
     # -- Défilement de la conversation (au mieux : l'API interne de
     # CTkScrollableFrame, `_parent_canvas`, peut changer d'une version à l'autre)
@@ -3144,6 +3171,9 @@ class Application:
             scrollbar_button_color=COULEUR_BARRE_DEFILEMENT)
         self._zone_historique.grid(row=1, column=1, sticky="nsew",
                                    padx=(4, 10), pady=(0, 10))
+        # add="+" : ne remplace pas la liaison interne de la zone (lot U2).
+        self._zone_historique.bind("<Configure>", self._sur_redim_historique,
+                                   add="+")
 
         bouton_fermer = ctk.CTkButton(
             fenetre, text="Fermer",
@@ -3159,6 +3189,35 @@ class Application:
                      fenetre.destroy()))
         if self._historique["jours"]:
             self._choisir_jour_historique(self._historique["jours"][0])
+
+    def _largeur_bulle_historique(self) -> int:
+        """Largeur de retour à la ligne des bulles de l'Historique, d'après
+        la largeur réelle de sa zone (avant : 520 fixe, plus large que la
+        colonne : texte coupé au bord)."""
+        zone = getattr(self, "_zone_historique", None)
+        try:
+            zone.update_idletasks()
+            largeur = int(zone.winfo_width())
+        except Exception:
+            largeur = 0
+        echelle = echelle_widget(zone)
+        if largeur <= 1:  # pas encore affichée : largeur minimale de la zone
+            largeur = int(340 * echelle)
+        return largeur_bulle_logique(largeur, echelle)
+
+    def _sur_redim_historique(self, _evenement=None) -> None:
+        self._reprogrammer("_apres_redim_historique", DELAI_REFLUX_MS,
+                           self._reflux_historique)
+
+    def _reflux_historique(self) -> None:
+        self._apres_redim_historique = None
+        try:
+            largeur = self._largeur_bulle_historique()
+            for etiquette in getattr(self, "_etiquettes_historique", []):
+                if etiquette.cget("wraplength") != largeur:
+                    etiquette.configure(wraplength=largeur)
+        except Exception:
+            pass
 
     def _choisir_jour_historique(self, jour: dict) -> None:
         """Charge un jour dans la fenêtre Historique."""
@@ -3189,9 +3248,12 @@ class Application:
                 text_color=COULEUR_TEXTE_FAIBLE,
                 justify="center").pack(pady=40)
             return
+        largeur = self._largeur_bulle_historique()
+        self._etiquettes_historique = []
         precedent = None
         for entree in entrees:
-            ajouter_bulle(zone, entree, 520, precedent)
+            self._etiquettes_historique.append(
+                ajouter_bulle(zone, entree, largeur, precedent))
             precedent = entree["role"]
         try:
             zone._parent_canvas.yview_moveto(1.0)
