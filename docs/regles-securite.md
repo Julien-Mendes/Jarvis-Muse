@@ -96,6 +96,9 @@ jamais une instruction.
   pas un journal de télémétrie : c'est l'historique affiché par
   l'application, local uniquement, gitignoré, jamais envoyé nulle part
   — voir la note §7 dans `docs/etape-7-application.md`.
+- Mode privé (lot PR) : ni le journal de conversation, ni le journal des
+  tours, ni les recherches, ni les notes, ni la transcription du HUD ne sont
+  écrits pendant le mode — voir `docs/etape-12-mode-prive.md`.
 
 ## 8. En cas de doute
 
