@@ -11,7 +11,9 @@ Deux usages :
      scripts/boucle_voix.py :
          python scripts/navigateur.py --interactif
      Commandes : ping, naviguer, rechercher, chercher_et_ouvrir, cliquer,
-     fermer_onglet, texte, capture, fermer — et, pour la recherche
+     fermer_onglet, texte, capture, fermer ; lot C2 : defiler (sens bas /
+     haut / fin / debut), historique (retour / avancer / resultats),
+     position (rang, decalage, genre), actualiser — et, pour la recherche
      différée (lot R1, avec --fond : Chrome réduit, processus séparé),
      resultats_web et ouvrir_resultat.
      Réponses JSON : {"ok": true, ...} ou {"ok": false, "erreur": "..."} ;
@@ -441,6 +443,14 @@ class Navigateur:
         self.page = None
         self._a_demarre = False
         self.redemarre = False
+        # Lot C2 : liste relevée (résultats YouTube de chercher_et_ouvrir, ou
+        # liens visibles de la page) pour choisir « la deuxième », « la
+        # suivante » sans relancer la recherche. Les liens interdits n'y
+        # entrent jamais (filtrés au relevé, revérifiés à l'ouverture).
+        self._liste = []
+        self._liste_url = None
+        self._liste_genre = None
+        self._position = None
         # Lot R1 : `fond` = Chrome réduit dans la barre des tâches, pour la
         # recherche différée — un processus et un profil distincts de la
         # session de la boucle vocale, qui n'est jamais touchée.
@@ -573,6 +583,7 @@ class Navigateur:
             self.page.goto(url, timeout=TIMEOUT_NAVIGATION_MS,
                            wait_until="domcontentloaded")
 
+        self.oublier_liste()
         self.avec_reprise(_aller)
         time.sleep(DELAI_APRES_NAVIGATION)
         return {"titre": self.page.title(), "url": self.page.url}
@@ -589,6 +600,7 @@ class Navigateur:
         if not requete:
             raise ValueError("Requête de recherche vide.")
         self._assurer_demarre()
+        self.oublier_liste()
         self.avec_reprise(lambda: self.page.goto(
             url_recherche(requete), timeout=TIMEOUT_NAVIGATION_MS,
             wait_until="domcontentloaded"))
@@ -655,7 +667,13 @@ class Navigateur:
             return self.resultats_youtube()
 
         resultats = self.avec_reprise(_chercher)
+        # Lot C2 : la liste est gardée pour « la deuxième », « la suivante ».
+        self._retenir_liste(resultats, "video")
         choix = choisir_resultat(resultats, titre, chaine)
+        if choix is not None:
+            self._position = next(
+                (i for i, r in enumerate(self._liste)
+                 if r.get("url") == choix.get("url")), None)
         if choix is None:
             return {"trouve": False,
                     "resultats": [{"titre": r["titre"], "chaine": r["chaine"]}
@@ -832,8 +850,258 @@ class Navigateur:
         if raison:
             raise RuntimeError(f"Clic refusé : {raison}.")
         candidat.click(timeout=5000)
+        # Page changée par un clic libre : les positions relevées ne valent
+        # plus (lot C2).
+        self.oublier_liste()
         time.sleep(DELAI_APRES_CLIC)
         return {"titre": self.page.title(), "url": self.page.url}
+
+    # ------------------------------------------------------------------
+    # Lot C2 — navigation dans la page et entre les pages
+    # ------------------------------------------------------------------
+    # Rien ici ne remplit, ne soumet ni ne ferme quoi que ce soit : défiler
+    # et actualiser ne touchent à aucun élément ; retour / avant sont les
+    # boutons du navigateur ; le choix par position n'ouvre qu'un lien de la
+    # liste relevée, d'où les liens interdits sont exclus, et revérifie la
+    # cible (adresse, élément, page d'arrivée) avant et après.
+
+    def oublier_liste(self) -> None:
+        self._liste, self._liste_url = [], None
+        self._liste_genre, self._position = None, None
+
+    def _retenir_liste(self, elements: list, genre: str) -> None:
+        """Garde la liste relevée sur la page courante (sans lien interdit)."""
+        propres = []
+        for e in elements or []:
+            url = str(e.get("url", "") or "")
+            try:
+                url = normaliser_url(url)
+            except ValueError:
+                continue
+            if lien_interdit(url):
+                continue
+            propres.append(dict(e, url=url))
+        self._liste = propres
+        try:
+            self._liste_url = self.page.url
+        except Exception:
+            self._liste_url = None
+        self._liste_genre, self._position = genre, None
+
+    def _sur_la_liste(self) -> bool:
+        try:
+            return bool(self._liste_url) and (
+                cle_url(self.page.url) == cle_url(self._liste_url))
+        except Exception:
+            return False
+
+    def _synchroniser_position(self) -> None:
+        """Après retour / avant : la position suit la page affichée."""
+        try:
+            cle = cle_url(self.page.url)
+        except Exception:
+            return
+        for i, element in enumerate(self._liste):
+            if cle_url(element["url"]) == cle:
+                self._position = i
+                return
+
+    def _exiger_page(self) -> None:
+        """Une page doit déjà être ouverte : on ne lance pas Chrome pour
+        défiler ou revenir en arrière sur une page vide."""
+        if not self._a_demarre:
+            raise RuntimeError("Aucune page n'est ouverte dans Chrome.")
+        self._assurer_demarre()
+
+    def _etat(self, **extra) -> dict:
+        return {"titre": self.page.title(), "url": self.page.url, **extra}
+
+    def defiler(self, sens: str) -> dict:
+        """Fait défiler la page : « bas » / « haut » (environ un écran),
+        « fin » / « debut » (bas ou haut de la page)."""
+        sens = str(sens or "").strip().lower()
+        if sens not in ("bas", "haut", "fin", "debut"):
+            raise ValueError(f"sens de défilement inconnu : {sens!r}")
+        self._exiger_page()
+        mesure = self.avec_reprise(
+            lambda: self.page.evaluate(SCRIPT_DEFILER, sens)) or {}
+        avant = float(mesure.get("avant", 0) or 0)
+        apres = float(mesure.get("apres", 0) or 0)
+        maximum = float(mesure.get("max", 0) or 0)
+        return self._etat(sens=sens, bouge=abs(apres - avant) >= 1,
+                          en_haut=apres <= 1, en_bas=apres >= maximum - 2)
+
+    def historique(self, sens: str) -> dict:
+        """Bouton retour (« retour »), avant (« avancer ») du navigateur, ou
+        retour à la liste de résultats relevée (« resultats »).
+
+        `bouge` vaut False s'il n'y a pas de page avant / après. Une page
+        d'arrivée de connexion, de compte ou de paiement est refusée : on
+        revient où l'on était.
+        """
+        sens = str(sens or "").strip().lower()
+        if sens not in ("retour", "avancer", "resultats"):
+            raise ValueError(f"sens inconnu : {sens!r}")
+        self._exiger_page()
+        if sens == "resultats" and self._sur_la_liste():
+            return self._etat(bouge=False, deja=True)
+        avant = self.page.url
+        aller = self.page.go_forward if sens == "avancer" else self.page.go_back
+        self.avec_reprise(lambda: aller(timeout=TIMEOUT_NAVIGATION_MS,
+                                        wait_until="domcontentloaded"))
+        if (sens == "resultats" and self._liste_url
+                and not self._sur_la_liste()):
+            # Historique qui ne mène pas à la liste : même liste, même onglet.
+            self.page.goto(self._liste_url, timeout=TIMEOUT_NAVIGATION_MS,
+                           wait_until="domcontentloaded")
+        bouge = self.page.url != avant
+        if bouge:
+            time.sleep(min(DELAI_APRES_NAVIGATION, 2.0))
+            if lien_interdit(self.page.url):
+                annuler = (self.page.go_back if sens == "avancer"
+                           else self.page.go_forward)
+                try:
+                    annuler(timeout=TIMEOUT_NAVIGATION_MS,
+                            wait_until="domcontentloaded")
+                except Exception:
+                    pass
+                raise RuntimeError(
+                    "Navigation refusée : cette page est une page de "
+                    "connexion, de compte ou de paiement.")
+            self._synchroniser_position()
+        return self._etat(bouge=bouge)
+
+    def actualiser(self) -> dict:
+        """Recharge la page courante (aucun formulaire renvoyé : Chrome
+        piloté ne renvoie pas de données sans confirmation)."""
+        self._exiger_page()
+        self.avec_reprise(lambda: self.page.reload(
+            timeout=TIMEOUT_NAVIGATION_MS, wait_until="domcontentloaded"))
+        time.sleep(min(DELAI_APRES_NAVIGATION, 2.0))
+        return self._etat()
+
+    def liens_visibles(self, genre: str = "lien") -> list:
+        """Liens visibles à l'écran, dans l'ordre de lecture, sans lien
+        interdit ni élément de formulaire (données externes).
+
+        `genre` « video » : seulement les liens de vidéo (YouTube /watch).
+        """
+        bruts = self.page.evaluate(SCRIPT_LIENS_VISIBLES) or []
+        propres, vus = [], set()
+        for r in bruts:
+            if not isinstance(r, dict):
+                continue
+            url = str(r.get("href", "") or "")
+            if not re.match(r"(?i)^https?://", url) or url in vus:
+                continue
+            info = {"formulaire": bool(r.get("formulaire")), "balise": "a",
+                    "type": "", "editable": bool(r.get("editable")),
+                    "href": url, "texte": str(r.get("texte", ""))}
+            if lien_interdit(url) or refus_element(info):
+                continue
+            if genre == "video" and not re.search(
+                    r"youtube\.com/watch\?(?:.*&)?v=", url):
+                continue
+            vus.add(url)
+            propres.append({"titre": " ".join(
+                str(r.get("texte", "")).split())[:200], "url": url,
+                "brut": str(r.get("brut", ""))[:500]})
+            if len(propres) >= 30:
+                break
+        return propres
+
+    def ouvrir_position(self, rang: int | None = None, decalage: int = 0,
+                        genre: str = "lien") -> dict:
+        """Ouvre un élément de la liste relevée, par son rang (1 = premier,
+        -1 = dernier) ou relativement au dernier ouvert (`decalage` +1 =
+        suivant, -1 = précédent).
+
+        La liste des résultats de chercher_et_ouvrir sert tant qu'on est sur
+        cette page ou sur un élément ouvert depuis elle ; sinon les liens
+        visibles de la page sont relevés. Jamais de nouvelle recherche.
+        Retour : {"titre", "url", "rang", "nombre"} ou {"hors_liste": True,
+        "nombre"} / {"aucun_precedent": True} / {"liste_vide": True}.
+        """
+        genre = "video" if str(genre or "").lower() == "video" else "lien"
+        self._exiger_page()
+        self._synchroniser_position()
+        if not self._liste or not (self._sur_la_liste()
+                                   or self._position is not None):
+            self._retenir_liste(self.liens_visibles(genre), genre)
+        liste = self._liste
+        if not liste:
+            return {"liste_vide": True, "genre": genre}
+        if rang is not None:
+            rang = int(rang)
+            index = len(liste) - 1 if rang < 0 else rang - 1
+        elif decalage > 0:
+            index = 0 if self._position is None else self._position + 1
+        elif decalage < 0:
+            if not self._position:
+                return {"aucun_precedent": True, "nombre": len(liste)}
+            index = self._position - 1
+        else:
+            raise ValueError("rang ou décalage requis")
+        if not 0 <= index < len(liste):
+            return {"hors_liste": True, "nombre": len(liste),
+                    "genre": self._liste_genre or genre}
+        cible = liste[index]
+        if lien_interdit(cible["url"]):  # revérifié (ne doit jamais arriver)
+            raise RuntimeError("Navigation refusée : ce lien mène à une page "
+                               "de connexion, de compte ou de paiement.")
+        clique = False
+        if self._sur_la_liste():
+            clique = self._cliquer_element_liste(cible)
+        if not clique:
+            # Même cible, même onglet : c'est toujours une navigation.
+            self.avec_reprise(lambda: self.page.goto(
+                cible["url"], timeout=TIMEOUT_NAVIGATION_MS,
+                wait_until="domcontentloaded"))
+        time.sleep(min(DELAI_APRES_NAVIGATION, 2.0))
+        if lien_interdit(self.page.url):
+            # Redirigé vers une connexion ou un paiement : on revient.
+            try:
+                self.page.go_back(timeout=TIMEOUT_NAVIGATION_MS,
+                                  wait_until="domcontentloaded")
+            except Exception:
+                pass
+            raise RuntimeError("Navigation refusée : ce lien mène à une page "
+                               "de connexion, de compte ou de paiement.")
+        self._position = index
+        return self._etat(rang=index + 1, nombre=len(liste), clique=clique,
+                          genre=self._liste_genre or genre)
+
+    def _cliquer_element_liste(self, cible: dict) -> bool:
+        """Clique le lien de l'élément sur la page de la liste, après les
+        mêmes vérifications que `cliquer` (refus_element)."""
+        ident = re.sub(r"[^\w-]", "", str(cible.get("id", "") or ""))
+        if ident:
+            selecteur = f"a[href*='v={ident}']"
+        elif cible.get("brut"):
+            selecteur = "a[href=" + json.dumps(cible["brut"]) + "]"
+        else:
+            return False
+        try:
+            lien = self.page.locator(selecteur).first
+            if lien.count() == 0:
+                return False
+            info = lien.evaluate(SCRIPT_INFO_ELEMENT)
+            if refus_element(info if isinstance(info, dict)
+                             else {"formulaire": True}):
+                raise RuntimeError(
+                    "Navigation refusée : ce lien n'est pas une simple "
+                    "navigation (connexion, compte, paiement ou formulaire).")
+            lien.click(timeout=5000)
+            try:
+                self.page.wait_for_load_state("domcontentloaded",
+                                              timeout=TIMEOUT_NAVIGATION_MS)
+            except Exception:
+                pass
+            return True
+        except RuntimeError:
+            raise
+        except Exception:
+            return False
 
     def fermer_onglet(self) -> dict:
         """Ferme l'onglet courant (la boucle exige un « oui » oral avant).
@@ -882,6 +1150,56 @@ SCRIPT_RESULTATS_WEB = r"""
                  href: a.getAttribute("href") || ""});
     if (sortie.length >= 20) break;
   }
+  return sortie;
+})()
+"""
+
+# Lot C2 — défilement : un écran (80 %) vers le bas ou le haut, ou jusqu'au
+# bas / haut de la page. Aucun élément n'est touché. Renvoie la position
+# avant / après et le maximum, pour dire « tu es déjà en bas ».
+SCRIPT_DEFILER = r"""
+(sens) => {
+  const el = document.scrollingElement || document.documentElement;
+  const h = window.innerHeight || 800;
+  const avant = window.scrollY;
+  const haut = Math.max(el.scrollHeight, document.body
+                        ? document.body.scrollHeight : 0);
+  let cible = avant;
+  if (sens === "bas") cible = avant + h * 0.8;
+  else if (sens === "haut") cible = avant - h * 0.8;
+  else if (sens === "fin") cible = haut;
+  else cible = 0;
+  window.scrollTo({top: Math.max(0, cible), behavior: "instant"});
+  return {avant: avant, apres: window.scrollY,
+          max: Math.max(0, haut - h)};
+}
+"""
+
+# Lot C2 — liens visibles à l'écran (ordre de lecture : haut puis gauche).
+# Le tri des liens interdits est fait en Python (liens_visibles).
+SCRIPT_LIENS_VISIBLES = r"""
+(() => {
+  const h = window.innerHeight || 800, w = window.innerWidth || 1200;
+  const sortie = [];
+  for (const a of document.querySelectorAll("a[href]")) {
+    const r = a.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2 || r.bottom < 0 || r.top > h
+        || r.right < 0 || r.left > w) continue;
+    const style = window.getComputedStyle(a);
+    if (style.visibility === "hidden" || style.display === "none") continue;
+    const texte = ((a.innerText || a.textContent || "") + " "
+                   + (a.getAttribute("aria-label") || "")
+                   + " " + (a.getAttribute("title") || ""))
+                  .replace(/\s+/g, " ").trim();
+    if (!texte) continue;
+    sortie.push({href: a.href || "", brut: a.getAttribute("href") || "",
+                 texte: texte.slice(0, 300), haut: r.top, gauche: r.left,
+                 formulaire: !!a.closest("form"),
+                 editable: !!a.isContentEditable});
+    if (sortie.length >= 200) break;
+  }
+  sortie.sort((x, y) => (Math.abs(x.haut - y.haut) < 8
+                         ? x.gauche - y.gauche : x.haut - y.haut));
   return sortie;
 })()
 """
@@ -956,6 +1274,23 @@ def boucle_interactive(fond: bool = False) -> int:
                 elif nom == "fermer_onglet":
                     info = navigateur.fermer_onglet()
                     reponse = {"ok": True, **info}
+                # Lot C2 : titre de page = donnée externe (non_fiable).
+                elif nom == "defiler":
+                    info = navigateur.defiler(commande.get("sens", ""))
+                    reponse = {"ok": True, **info, "non_fiable": True}
+                elif nom == "historique":
+                    info = navigateur.historique(commande.get("sens", ""))
+                    reponse = {"ok": True, **info, "non_fiable": True}
+                elif nom == "position":
+                    rang = commande.get("rang")
+                    info = navigateur.ouvrir_position(
+                        int(rang) if rang is not None else None,
+                        int(commande.get("decalage", 0) or 0),
+                        str(commande.get("genre", "lien")))
+                    reponse = {"ok": True, **info, "non_fiable": True}
+                elif nom == "actualiser":
+                    info = navigateur.actualiser()
+                    reponse = {"ok": True, **info, "non_fiable": True}
                 elif nom == "texte":
                     texte = navigateur.texte_page(
                         int(commande.get("max_caracteres",

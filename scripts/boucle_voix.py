@@ -520,8 +520,10 @@ def prompt_systeme(langue: str = "en") -> str:
             "Ne refais jamais une action déjà faite : ne rouvre pas un site "
             "déjà ouvert.\n"
             "Dans le navigateur, tu peux ouvrir un site, ouvrir une vidéo "
-            "YouTube précise (titre et chaîne) et cliquer sur un lien par "
-            "son texte. Tu ne peux jamais te connecter, acheter, remplir un "
+            "YouTube précise (titre et chaîne), cliquer sur un lien par "
+            "son texte, faire défiler la page, revenir en arrière ou avancer, "
+            "ouvrir le deuxième résultat ou le suivant, et actualiser la "
+            "page. Tu ne peux jamais te connecter, acheter, remplir un "
             "formulaire, ni fermer un onglet sans le oui de Julien.\n"
             "Pour une recherche à rapporter plus tard, ou une question qui "
             "demande plusieurs sources, lance une recherche en arrière-plan. "
@@ -549,7 +551,9 @@ def prompt_systeme(langue: str = "en") -> str:
         "Never redo an action already done: do not reopen a site that is "
         "already open.\n"
         "In the browser you can open a site, open a specific YouTube video "
-        "(title and channel) and click a link by its text. You can never "
+        "(title and channel), click a link by its text, scroll the page, go "
+        "back or forward, open the second result or the next one, and "
+        "refresh the page. You can never "
         "log in, buy, fill in a form, or close a tab without Julien's yes.\n"
         "For research to report back on later, or a question that needs "
         "several sources, start a background search. You cannot notify "
@@ -1049,6 +1053,40 @@ OUTIL_FERMER_PARAMETRES = {
     "required": [],
 }
 
+# Outil lot C2 — navigation dans la page ouverte (session pilotée). Réponse
+# prononcée directement : le titre de la page d'arrivée est une donnée
+# externe (§1), il ne repasse jamais par le modèle.
+OUTIL_PAGE_DESCRIPTION = (
+    "Naviguer dans la page ouverte dans Chrome : descendre, monter, aller en "
+    "bas ou en haut de la page, revenir en arrière, avancer, retourner aux "
+    "résultats, ouvrir le n-ième résultat ou lien (« la deuxième vidéo »), "
+    "le suivant, le précédent, ou actualiser la page."
+)
+OUTIL_PAGE_PARAMETRES = {
+    "type": "object",
+    "properties": {
+        "action": {
+            "type": "string",
+            "enum": sorted(["descendre", "monter", "bas_de_page",
+                            "haut_de_page", "retour", "avancer", "resultats",
+                            "position", "suivant", "precedent",
+                            "actualiser"]),
+            "description": "L'action demandée par Julien.",
+        },
+        "rang": {
+            "type": "integer",
+            "description": "Pour « position » : 1 = premier, 2 = deuxième… "
+                           "-1 = dernier.",
+        },
+        "genre": {
+            "type": "string",
+            "description": "« video » si Julien parle de vidéos, sinon "
+                           "« lien ».",
+        },
+    },
+    "required": ["action"],
+}
+
 
 def _paire_outil(nom: str, description: str, parametres: dict) -> tuple:
     """(forme Groq, forme Anthropic) d'un outil."""
@@ -1065,6 +1103,8 @@ OUTIL_CLIC_GROQ, OUTIL_CLIC_ANTHROPIC = _paire_outil(
     "cliquer", OUTIL_CLIC_DESCRIPTION, OUTIL_CLIC_PARAMETRES)
 OUTIL_FERMER_GROQ, OUTIL_FERMER_ANTHROPIC = _paire_outil(
     "fermer_onglet", OUTIL_FERMER_DESCRIPTION, OUTIL_FERMER_PARAMETRES)
+OUTIL_PAGE_GROQ, OUTIL_PAGE_ANTHROPIC = _paire_outil(
+    "naviguer_page", OUTIL_PAGE_DESCRIPTION, OUTIL_PAGE_PARAMETRES)
 
 # Outils lot R1 — recherche différée. lancer_recherche enregistre une tâche
 # (écriture : refusée après une lecture externe, échec fermé) ; lire_recherche
@@ -1216,6 +1256,19 @@ TEXTES_OUTILS_EN = {
             "fenetre": "True to close the whole Chrome window.",
         },
     },
+    "naviguer_page": {
+        "description": (
+            "Navigate the page open in Chrome: scroll down, scroll up, go to "
+            "the bottom or top of the page, go back, go forward, go back to "
+            "the results, open the n-th result or link (\"the second "
+            "video\"), the next one, the previous one, or refresh the page."),
+        "parametres": {
+            "action": "The action Julien asked for.",
+            "rang": "For \"position\": 1 = first, 2 = second… -1 = last.",
+            "genre": "\"video\" if Julien talks about videos, otherwise "
+                     "\"lien\".",
+        },
+    },
     "lancer_recherche": {
         "description": (
             "Start a web search in the background: Jarvis reads a few pages, "
@@ -1278,6 +1331,7 @@ def outils_pour(fournisseur: str, langue: str) -> list:
               "chercher_et_ouvrir": OUTIL_VIDEO_GROQ,
               "cliquer": OUTIL_CLIC_GROQ,
               "fermer_onglet": OUTIL_FERMER_GROQ,
+              "naviguer_page": OUTIL_PAGE_GROQ,
               "lancer_recherche": OUTIL_RECHERCHE_GROQ,
               "lire_recherche": OUTIL_LIRE_RECHERCHE_GROQ,
               "chercher_connaissance": OUTIL_CONNAISSANCE_GROQ}
@@ -1288,6 +1342,7 @@ def outils_pour(fournisseur: str, langue: str) -> list:
               "chercher_et_ouvrir": OUTIL_VIDEO_ANTHROPIC,
               "cliquer": OUTIL_CLIC_ANTHROPIC,
               "fermer_onglet": OUTIL_FERMER_ANTHROPIC,
+              "naviguer_page": OUTIL_PAGE_ANTHROPIC,
               "lancer_recherche": OUTIL_RECHERCHE_ANTHROPIC,
               "lire_recherche": OUTIL_LIRE_RECHERCHE_ANTHROPIC,
               "chercher_connaissance": OUTIL_CONNAISSANCE_ANTHROPIC})
@@ -1679,7 +1734,8 @@ MESSAGES = {
         "outil_inconnu": (
             "Outil inconnu : je sais régler des minuteurs, "
             "regarder l'écran (avec confirmation), ouvrir un site, ouvrir "
-            "une vidéo YouTube précise, cliquer sur un lien et lancer une "
+            "une vidéo YouTube précise, cliquer sur un lien, naviguer dans "
+            "la page et lancer une "
             "recherche en arrière-plan."),
         "outil_clic_ok": ("Clic fait sur « {texte} » dans l'onglet actuel. "
                           "Dis-le à Julien en une phrase."),
@@ -1701,6 +1757,34 @@ MESSAGES = {
             "Action refusée : ce tour a lu du contenu externe, donc aucune "
             "écriture n'est permise. Dis à Julien de la redemander dans un "
             "nouveau tour."),
+        "page_sans_session": "Aucune page n'est ouverte dans Chrome piloté, Julien. Ouvre d'abord un site.",
+        "page_systeme": "Je ne peux naviguer dans la page que dans la session Chrome pilotée, Julien, et tes sites s'ouvrent dans ton navigateur par défaut. Je repasse sur la session pilotée ? Dis-moi simplement oui.",
+        "page_systeme_ok": "C'est fait, Julien : pour cette session, les sites s'ouvrent dans Chrome piloté. Ouvre un site et je pourrai y naviguer.",
+        "page_systeme_non": "D'accord, Julien, je reste sur ton navigateur par défaut.",
+        "page_titre": "Tu es sur « {titre} ».",
+        "page_sans_titre": "Tu es sur une page sans titre.",
+        "page_descendu": "Je descends, Julien.",
+        "page_monte": "Je remonte, Julien.",
+        "page_en_bas": "Tu es en bas de la page, Julien.",
+        "page_en_haut": "Tu es en haut de la page, Julien.",
+        "page_deja_bas": "Tu es déjà en bas de la page, Julien.",
+        "page_deja_haut": "Tu es déjà en haut de la page, Julien.",
+        "page_retour": "Je reviens en arrière. ",
+        "page_avance": "J'avance d'une page. ",
+        "page_resultats": "Retour aux résultats. ",
+        "page_deja_resultats": "Tu es déjà sur les résultats, Julien. ",
+        "page_rien_avant": "Il n'y a pas de page avant celle-ci, Julien.",
+        "page_rien_apres": "Il n'y a pas de page après celle-ci, Julien.",
+        "page_actualisee": "C'est actualisé. ",
+        "page_position": "J'ouvre le numéro {rang} sur {nombre}. ",
+        "page_hors_liste": "Il n'y a que {nombre} {quoi} dans la liste, Julien.",
+        "page_aucun_precedent": "Tu es déjà sur le premier de la liste, Julien.",
+        "page_liste_vide": "Je ne vois aucun lien à ouvrir sur cette page, Julien.",
+        "page_quoi_video": "vidéos",
+        "page_quoi_lien": "liens",
+        "page_refusee": "Je ne suis pas ce lien, Julien : il mène à une connexion, un compte ou un paiement. Tu peux le faire toi-même.",
+        "page_echec": "Désolé Julien, je n'ai pas pu faire ça dans la page.",
+        "historique_page": "[Navigation dans Chrome à la demande de Julien : {action}.]",
         "historique_externe": ("[Contenu externe lu à Julien à voix haute ; "
                                "non conservé dans l'historique.]"),
     },
@@ -1762,7 +1846,8 @@ MESSAGES = {
         "outil_inconnu": (
             "Unknown tool: I can set timers, look at the screen "
             "(with confirmation), open a site, open a specific YouTube "
-            "video, click a link and start a background search."),
+            "video, click a link, navigate the page and start a background "
+            "search."),
         "outil_clic_ok": ("Clicked \"{texte}\" in the current tab. Tell "
                           "Julien in one sentence."),
         "outil_clic_refuse": (
@@ -1782,6 +1867,34 @@ MESSAGES = {
         "outil_bloque": (
             "Action refused: this turn read external content, so no writes "
             "are allowed. Tell Julien to ask again in a new turn."),
+        "page_sans_session": "No page is open in the controlled Chrome, Julien. Open a site first.",
+        "page_systeme": "I can only navigate inside a page in the controlled Chrome session, Julien, and your sites open in your default browser. Shall I switch back to the controlled session? Just say yes.",
+        "page_systeme_ok": "Done, Julien: for this session, sites open in the controlled Chrome. Open a site and I'll be able to navigate it.",
+        "page_systeme_non": "All right, Julien, I'll stay on your default browser.",
+        "page_titre": "You're on \"{titre}\".",
+        "page_sans_titre": "You're on a page with no title.",
+        "page_descendu": "Scrolling down, Julien.",
+        "page_monte": "Scrolling up, Julien.",
+        "page_en_bas": "You're at the bottom of the page, Julien.",
+        "page_en_haut": "You're at the top of the page, Julien.",
+        "page_deja_bas": "You're already at the bottom of the page, Julien.",
+        "page_deja_haut": "You're already at the top of the page, Julien.",
+        "page_retour": "Going back. ",
+        "page_avance": "Going forward. ",
+        "page_resultats": "Back to the results. ",
+        "page_deja_resultats": "You're already on the results, Julien. ",
+        "page_rien_avant": "There's no page before this one, Julien.",
+        "page_rien_apres": "There's no page after this one, Julien.",
+        "page_actualisee": "Refreshed. ",
+        "page_position": "Opening number {rang} of {nombre}. ",
+        "page_hors_liste": "There are only {nombre} {quoi} in the list, Julien.",
+        "page_aucun_precedent": "You're already on the first one in the list, Julien.",
+        "page_liste_vide": "I don't see any link to open on this page, Julien.",
+        "page_quoi_video": "videos",
+        "page_quoi_lien": "links",
+        "page_refusee": "I won't follow that link, Julien: it leads to a login, an account or a payment. You can do it yourself.",
+        "page_echec": "Sorry Julien, I couldn't do that on the page.",
+        "historique_page": "[Navigation in Chrome at Julien's request: {action}.]",
         "historique_externe": ("[External content read aloud to Julien; not "
                                "kept in history.]"),
     },
@@ -2241,6 +2354,9 @@ class SessionNavigateur:
         # Lot R1 : `fond` = Chrome réduit, processus et profil séparés,
         # pour la recherche différée (jamais la session de la boucle).
         self.fond = fond
+        # Lot C2 : « playwright » après le oui de Julien quand il était en
+        # mode « systeme » (pour cette session seulement, config inchangée).
+        self.navigateur_defaut_force = None
 
     def active(self) -> bool:
         """Vrai si le processus du navigateur tourne."""
@@ -2356,7 +2472,9 @@ def executer_navigateur(demande: dict, session: SessionNavigateur | None,
     # s'ouvrent dans le vrai navigateur par défaut de Julien (ses
     # connexions, ses profils) ; Playwright est alors réservé aux
     # recherches. « playwright » = tout passe par Playwright.
-    mode = str(config.get("navigateur_defaut", "playwright")).strip().lower()
+    mode = (getattr(session, "navigateur_defaut_force", None)
+            or str(config.get("navigateur_defaut", "playwright"))
+            ).strip().lower()
     utiliser_playwright = bool(recherche) or mode == "playwright"
     if session is not None and utiliser_playwright:
         # Le champ de la recherche s'appelle « requete » : c'est ce que lit
@@ -2560,6 +2678,314 @@ def detecter_fermeture(texte: str):
     if re.fullmatch(r"close (?:the )?(?:browser|chrome)(?: window)?", t):
         return {"fenetre": True}
     return None
+
+
+# ---------------------------------------------------------------------------
+# Lot C2 — navigation dans la page et entre les pages (session pilotée)
+# ---------------------------------------------------------------------------
+# Actions : defiler (sens bas / haut / fin / debut), historique (retour /
+# avancer / resultats), position (rang ou décalage ±1), actualiser. Le titre
+# de la page d'arrivée est une donnée externe (§1) : il est dit à Julien par
+# le code, nettoyé, et ne repasse jamais par le modèle ni par l'historique.
+
+ORDINAUX = {
+    "premier": 1, "première": 1, "premiere": 1, "1er": 1, "1re": 1,
+    "1ère": 1, "deuxième": 2, "deuxieme": 2, "second": 2, "seconde": 2,
+    "troisième": 3, "troisieme": 3, "quatrième": 4, "quatrieme": 4,
+    "cinquième": 5, "cinquieme": 5, "sixième": 6, "sixieme": 6,
+    "septième": 7, "septieme": 7, "huitième": 8, "huitieme": 8,
+    "neuvième": 9, "neuvieme": 9, "dixième": 10, "dixieme": 10,
+    "dernier": -1, "dernière": -1, "derniere": -1,
+    "first": 1, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6,
+    "seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10, "last": -1,
+}
+_ORDINAL = (r"(?P<ord>" + "|".join(sorted(map(re.escape, ORDINAUX),
+                                          key=len, reverse=True))
+            + r"|\d{1,2}(?:e|ème|eme|nd|rd|th|st)?)")
+_GENRE_FR = r"(?P<genre>vidéo|video|lien|résultat|resultat|page)"
+_GENRE_EN = r"(?P<genre>video|link|result|one)"
+
+
+def _rang_ordinal(texte: str) -> int | None:
+    if texte in ORDINAUX:
+        return ORDINAUX[texte]
+    m = re.fullmatch(r"(\d{1,2})\D*", texte)
+    return int(m.group(1)) if m and int(m.group(1)) > 0 else None
+
+
+def _genre_position(mot: str | None) -> str:
+    return "video" if (mot or "").startswith(("vid",)) else "lien"
+
+
+def detecter_navigation_page(texte: str):
+    """« descends », « reviens en arrière », « ouvre la deuxième vidéo »,
+    « la suivante », « actualise la page »… (et l'anglais), sans LLM.
+
+    Retourne {"action": ..., ...} ou None. Phrases entières seulement :
+    « descends la poubelle » ou « reviens-moi avec ça » ne sont pas pris.
+    """
+    t = " ".join(re.sub(r"[^\w\s'-]", " ", texte.strip().lower()
+                        .replace("’", "'")).split())
+    t = re.sub(r"^(?:jarvis |please |s'il te plaît |s'il te plait |ok )+",
+               "", t)
+    t = re.sub(r"(?: please| s'il te plaît| s'il te plait| stp| svp"
+               r"| jarvis| julien)+$", "", t)
+    if not t:
+        return None
+    page = r"(?: (?:de |sur )?(?:la|cette) page| du site)?"
+    # Défilement — d'abord le bas / haut de la page, puis d'un écran.
+    if re.fullmatch(r"(?:va|descends?|défile|defile|fais défiler|"
+                    r"fais defiler|aller?) (?:tout )?(?:en bas|jusqu'en bas|"
+                    r"jusqu'au bas|à la fin|a la fin|au bas)" + page
+                    + r"|tout en bas" + page
+                    + r"|(?:scroll|go|jump|skip) (?:all the way )?(?:down )?"
+                    r"to the (?:bottom|end)(?: of the page)?"
+                    r"|bottom of the page", t):
+        return {"action": "defiler", "sens": "fin"}
+    if re.fullmatch(r"(?:va|remonte|retourne|reviens|monte|défile|defile|"
+                    r"fais défiler|fais defiler|aller?) (?:tout )?(?:en haut|"
+                    r"jusqu'en haut|au début|au debut|au haut)" + page
+                    + r"|tout en haut" + page
+                    + r"|(?:scroll|go|jump) (?:all the way )?(?:back )?(?:up )?"
+                    r"to the top(?: of the page)?|back to (?:the )?top"
+                    r"|top of the page", t):
+        return {"action": "defiler", "sens": "debut"}
+    if re.fullmatch(r"(?:descends?|défile|defile|fais défiler|fais defiler|"
+                    r"va plus bas|plus bas)(?: (?:un peu|encore|un peu plus|"
+                    r"la page|vers le bas|un écran|un ecran))*"
+                    r"|(?:scroll|go|move) down(?: a bit| a little| more"
+                    r"| the page| some)*|scroll", t):
+        return {"action": "defiler", "sens": "bas"}
+    if re.fullmatch(r"(?:remonte|monte|va plus haut|plus haut|"
+                    r"défile vers le haut|defile vers le haut|"
+                    r"fais défiler vers le haut|fais defiler vers le haut)"
+                    r"(?: (?:un peu|encore|un peu plus|la page))*"
+                    r"|(?:scroll|go|move) (?:back )?up(?: a bit| a little"
+                    r"| more| the page| some)*", t):
+        return {"action": "defiler", "sens": "haut"}
+    # Retour aux résultats / retour / avant (boutons du navigateur).
+    if re.fullmatch(r"(?:(?:reviens|retourne|retour|revenir|va) "
+                    r"(?:aux|à la liste des|a la liste des) résultats|"
+                    r"(?:reviens|retourne|retour|revenir|va) "
+                    r"(?:aux|à la liste des|a la liste des) resultats|"
+                    r"(?:go )?back to (?:the )?(?:search )?results)", t):
+        return {"action": "historique", "sens": "resultats"}
+    if re.fullmatch(r"(?:reviens|retourne|retour|revenir|recule|va) "
+                    r"(?:en arrière|en arriere|à la page précédente|"
+                    r"a la page precedente|à la page d'avant|"
+                    r"a la page d'avant)|page précédente|page precedente|"
+                    r"recule|retour|reviens|"
+                    r"go back(?: a page| one page| to the previous page)?|"
+                    r"back|previous page", t):
+        return {"action": "historique", "sens": "retour"}
+    if re.fullmatch(r"avance(?: d'une page| à la page suivante| a la page "
+                    r"suivante)?|va en avant|va vers l'avant|"
+                    r"(?:go )?forward(?: a page| one page)?", t):
+        return {"action": "historique", "sens": "avancer"}
+    # Actualiser.
+    if re.fullmatch(r"(?:actualise|recharge|rafraîchis|rafraichis|"
+                    r"rafraîchit|rafraichit)(?: la page| cette page| "
+                    r"l'onglet)?|(?:refresh|reload)(?: the| this)?"
+                    r"(?: page| tab)?", t):
+        return {"action": "actualiser"}
+    # Suivant / précédent dans la liste relevée.
+    verbe_fr = r"(?:(?:ouvre|mets|lance|clique sur|passe à|passe a|va à|va a)"\
+               r" )?"
+    # « clique sur la vidéo suivante » reste un clic par texte (C1).
+    m = re.fullmatch(r"(?:(?:ouvre|mets|lance|passe à|passe a|va à|va a) )?"
+                     r"(?:la|le) (?:(?P<g1>vidéo|video|lien|"
+                     r"résultat|resultat) )?(?P<sens>suivante?|précédente?|"
+                     r"precedente?)(?: (?P<g2>vidéo|video|lien|résultat|"
+                     r"resultat))?", t)
+    if m:
+        return {"action": "position", "rang": None,
+                "decalage": 1 if m.group("sens").startswith("suiv") else -1,
+                "genre": _genre_position(m.group("g1") or m.group("g2"))}
+    # « click next video » reste un clic par texte (C1, bouton de YouTube).
+    m = re.fullmatch(r"(?:(?:open|play|put on|go to) )?(?:the )?"
+                     r"(?P<sens>next|previous)(?: (?P<g>video|link|result|"
+                     r"one))?", t)
+    if m:
+        return {"action": "position", "rang": None,
+                "decalage": 1 if m.group("sens") == "next" else -1,
+                "genre": _genre_position(m.group("g"))}
+    # Choix par position : « ouvre la deuxième vidéo », « le 3e lien ».
+    m = re.fullmatch(verbe_fr + r"(?:la|le|l') ?" + _ORDINAL
+                     + r"(?: " + _GENRE_FR + r")?(?: de la liste| de la page|"
+                     r" sur la page)?", t)
+    if m is None:
+        m = re.fullmatch(r"(?:(?:open|play|put on|click|go to) )?(?:the )?"
+                         + _ORDINAL + r"(?: " + _GENRE_EN + r")?"
+                         r"(?: on the page| in the list| on the list)?", t)
+    if m:
+        rang = _rang_ordinal(m.group("ord"))
+        # « la deuxième » seule n'est prise qu'avec un verbe ou un nom :
+        # « premier » tout court reste au modèle.
+        if rang is not None and (m.group("genre") or re.match(
+                r"(?:ouvre|mets|lance|clique|passe|va|open|play|put|click|"
+                r"go|la |le |l'|the )", t)):
+            return {"action": "position", "rang": rang, "decalage": 0,
+                    "genre": _genre_position(m.group("genre"))}
+    return None
+
+
+def _titre_page_parle(titre: str) -> str:
+    """Titre de page prononçable : sans « - YouTube » ni compteur « (3) »."""
+    titre = re.sub(r"^\(\d+\)\s*", "", str(titre or "").strip())
+    titre = re.sub(r"\s*[-–—|]\s*YouTube\s*$", "", titre)
+    return _texte_page_parle(titre)
+
+
+def _annonce_titre(langue: str, reponse: dict) -> str:
+    titre = _titre_page_parle(reponse.get("titre"))
+    return (msg(langue, "page_titre", titre=titre) if titre
+            else msg(langue, "page_sans_titre"))
+
+
+def executer_navigation_page(demande: dict, session, config: dict) -> dict:
+    """Défiler, retour / avant, choix par position, actualiser (lot C2).
+
+    Retour : {"texte": phrase dite directement, "externe": bool,
+    "historique": repère pour le modèle (sans donnée externe),
+    "proposer_session": bool}. La session pilotée seule : en mode
+    « systeme », Jarvis le dit et propose d'y revenir (oui oral).
+    """
+    langue = str(config["langue"])
+    action = str(demande.get("action", "")).strip().lower()
+    historique = msg(langue, "historique_page",
+                     action=demande.get("libelle") or action)
+    base = {"externe": False, "historique": historique}
+    mode = (getattr(session, "navigateur_defaut_force", None)
+            or str(config.get("navigateur_defaut", "playwright"))
+            ).strip().lower()
+    if mode == "systeme":
+        return dict(base, texte=msg(langue, "page_systeme"),
+                    proposer_session=True)
+    if session is None or not session.active():
+        return dict(base, texte=msg(langue, "page_sans_session"))
+    if action == "defiler":
+        commande = {"commande": "defiler",
+                    "sens": demande.get("sens") or "bas"}
+    elif action == "historique":
+        commande = {"commande": "historique",
+                    "sens": demande.get("sens") or "retour"}
+    elif action == "position":
+        commande = {"commande": "position", "rang": demande.get("rang"),
+                    "decalage": int(demande.get("decalage") or 0),
+                    "genre": demande.get("genre") or "lien"}
+        if commande["rang"] is None and not commande["decalage"]:
+            commande["decalage"] = 1
+    elif action == "actualiser":
+        commande = {"commande": "actualiser"}
+    else:
+        return dict(base, texte=msg(langue, "page_echec"))
+    reponse = session.envoyer(commande)
+    if not reponse.get("ok"):
+        erreur = str(reponse.get("erreur", ""))
+        print(f"Navigation dans la page : {erreur or 'erreur inconnue'}",
+              file=sys.stderr)
+        if erreur.startswith(("Navigation refusée", "Clic refusé")):
+            return dict(base, texte=msg(langue, "page_refusee"))
+        if erreur.startswith("Aucune page"):
+            return dict(base, texte=msg(langue, "page_sans_session"))
+        return dict(base, texte=msg(langue, "page_echec"))
+    prefixe = msg(langue, "nav_redemarre") if reponse.get("redemarre") else ""
+    if action == "defiler":
+        sens = commande["sens"]
+        if not reponse.get("bouge"):
+            cle = ("page_deja_bas" if sens in ("bas", "fin")
+                   else "page_deja_haut")
+        else:
+            cle = {"bas": "page_descendu", "haut": "page_monte",
+                   "fin": "page_en_bas", "debut": "page_en_haut"}[sens]
+        return dict(base, texte=prefixe + msg(langue, cle))
+    if action == "historique":
+        sens = commande["sens"]
+        if reponse.get("deja"):
+            return dict(base, externe=True, texte=prefixe + msg(
+                langue, "page_deja_resultats") + _annonce_titre(langue,
+                                                                reponse))
+        if not reponse.get("bouge"):
+            return dict(base, texte=prefixe + msg(
+                langue, "page_rien_apres" if sens == "avancer"
+                else "page_rien_avant"))
+        debut = {"retour": "page_retour", "avancer": "page_avance",
+                 "resultats": "page_resultats"}[sens]
+        return dict(base, externe=True, texte=prefixe + msg(langue, debut)
+                    + _annonce_titre(langue, reponse))
+    if action == "position":
+        quoi = msg(langue, "page_quoi_video"
+                   if reponse.get("genre") == "video" else "page_quoi_lien")
+        if reponse.get("liste_vide"):
+            return dict(base, texte=prefixe + msg(langue, "page_liste_vide"))
+        if reponse.get("aucun_precedent"):
+            return dict(base, texte=prefixe + msg(langue,
+                                                  "page_aucun_precedent"))
+        if reponse.get("hors_liste"):
+            return dict(base, texte=prefixe + msg(
+                langue, "page_hors_liste", nombre=int(reponse.get("nombre")
+                                                      or 0), quoi=quoi))
+        return dict(base, externe=True, texte=prefixe + msg(
+            langue, "page_position", rang=int(reponse.get("rang") or 0),
+            nombre=int(reponse.get("nombre") or 0))
+            + _annonce_titre(langue, reponse))
+    return dict(base, externe=True, texte=prefixe + msg(
+        langue, "page_actualisee") + _annonce_titre(langue, reponse))
+
+
+ACTIONS_PAGE = {
+    "descendre": {"action": "defiler", "sens": "bas"},
+    "monter": {"action": "defiler", "sens": "haut"},
+    "bas_de_page": {"action": "defiler", "sens": "fin"},
+    "haut_de_page": {"action": "defiler", "sens": "debut"},
+    "retour": {"action": "historique", "sens": "retour"},
+    "avancer": {"action": "historique", "sens": "avancer"},
+    "resultats": {"action": "historique", "sens": "resultats"},
+    "position": {"action": "position", "decalage": 0},
+    "suivant": {"action": "position", "rang": None, "decalage": 1},
+    "precedent": {"action": "position", "rang": None, "decalage": -1},
+    "actualiser": {"action": "actualiser"},
+}
+
+
+def demande_page_outil(args: dict) -> dict:
+    """Arguments de l'outil naviguer_page -> demande pour
+    executer_navigation_page (action inconnue : échec dit, rien fait)."""
+    nom = str(args.get("action", "") or "").strip().lower()
+    demande = dict(ACTIONS_PAGE.get(nom, {"action": "inconnue"}))
+    demande["libelle"] = nom
+    demande["genre"] = ("video" if str(args.get("genre", "")).lower()
+                        .startswith("vid") else "lien")
+    if nom == "position":
+        try:
+            demande["rang"] = int(args.get("rang"))
+        except (TypeError, ValueError):
+            demande = {"action": "inconnue", "libelle": nom}
+        else:
+            if demande["rang"] == 0:
+                demande = {"action": "inconnue", "libelle": nom}
+    return demande
+
+
+def _conclure_navigation_page(navigation: dict, etat_tour: dict,
+                              confirmation: dict | None) -> str:
+    """Report du résultat de navigation sur le tour (externe, historique,
+    proposition de revenir à la session pilotée)."""
+    if navigation.get("externe"):
+        etat_tour["externe"] = True
+    if navigation.get("historique"):
+        etat_tour["historique"] = navigation["historique"]
+    if navigation.get("proposer_session"):
+        armer_passage_session(confirmation)
+    return navigation["texte"]
+
+
+def armer_passage_session(confirmation: dict | None) -> None:
+    """Propose de revenir à la session pilotée (oui oral, 30 s)."""
+    if confirmation is not None:
+        confirmation["outil"] = "passer_session_pilotee"
+        confirmation["arguments"] = {}
+        confirmation["arme_a"] = time.monotonic()
 
 
 # ---------------------------------------------------------------------------
@@ -2922,6 +3348,14 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
                 return executer_garder_recherche(
                     en_attente.get("arguments", {}).get("recherche_id"),
                     config)
+        if (en_attente["outil"] == "passer_session_pilotee"
+                and not perimee):
+            if est_confirmation_courte(transcription):
+                if session_navigateur is not None:
+                    session_navigateur.navigateur_defaut_force = "playwright"
+                return msg(langue, "page_systeme_ok")
+            if est_refus_court(transcription):
+                return msg(langue, "page_systeme_non")
         if (not perimee and en_attente["outil"] == "garder_note"
                 and est_refus_court(transcription)):
             return connaissances_mod.texte(langue, "note_pas_gardee")
@@ -2959,6 +3393,15 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
             confirmation["arme_a"] = time.monotonic()
         return msg(langue, "fermer_demande_fenetre"
                    if demande_fermeture["fenetre"] else "fermer_demande")
+    # Lot C2 — navigation dans la page (session pilotée seulement).
+    demande_page = detecter_navigation_page(transcription)
+    if demande_page is not None:
+        _outil("naviguer_page")
+        demande_page["libelle"] = transcription.strip()[:120]
+        navigation = executer_navigation_page(demande_page,
+                                              session_navigateur, config)
+        return _conclure_navigation_page(navigation, etat_tour,
+                                         confirmation)
     # Lot R1 — recherche différée : lancement, suivi, demande de notification.
     demande_recherche = recherche_mod.detecter_lancement(transcription)
     if demande_recherche is not None:
@@ -3070,6 +3513,13 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
                     if video.get("historique"):
                         etat_tour["historique"] = video["historique"]
                     return video["texte"]
+                elif appel["nom"] == "naviguer_page":
+                    # Lot C2 — réponse directe : le titre de la page
+                    # (donnée externe, §1) ne repasse pas par le modèle.
+                    navigation = executer_navigation_page(
+                        demande_page_outil(args), session_navigateur, config)
+                    return _conclure_navigation_page(navigation, etat_tour,
+                                                     confirmation)
                 elif appel["nom"] == "lancer_recherche":
                     # Réponse directe : la confirmation est dite telle
                     # quelle (elle ne contient que les mots de Julien).
