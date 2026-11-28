@@ -177,6 +177,10 @@ stdin (une par ligne) et répond en JSON sur stdout :
 {"commande": "chercher_et_ouvrir", "site": "youtube", "titre": "...", "chaine": "..."}
 {"commande": "cliquer", "texte": "Vidéos"}
 {"commande": "fermer_onglet"}
+{"commande": "defiler", "sens": "bas"}
+{"commande": "historique", "sens": "retour"}
+{"commande": "position", "rang": 2, "decalage": 0, "genre": "video"}
+{"commande": "actualiser"}
 {"commande": "texte", "max_caracteres": 5000}
 {"commande": "capture", "sortie": "capture-page.png"}
 {"commande": "fermer"}
@@ -186,7 +190,8 @@ stdin (une par ligne) et répond en JSON sur stdout :
 Réponses : `{"ok": true, "titre": ..., "url": ...}` ou
 `{"ok": false, "erreur": "..."}`. Le texte de page est marqué
 `"non_fiable": true` : c'est une donnée externe (de même pour la réponse
-de `chercher_et_ouvrir`). `"redemarre": true` signale que Chrome a dû être
+de `chercher_et_ouvrir` et des commandes du lot C2, qui renvoient le titre
+de la page). `"redemarre": true` signale que Chrome a dû être
 relancé pendant la commande.
 
 ## Utilisation — dans la boucle vocale
@@ -218,6 +223,34 @@ Dans `scripts/boucle_voix.py` (F9 pour parler) :
 - **« Ferme l'onglet »** / **« Ferme Chrome »** (chemin rapide ou outil
   `fermer_onglet`) : Jarvis demande toujours « Je ferme l'onglet ? » ; seul
   un « oui » court dans les 30 s ferme quoi que ce soit.
+- **Naviguer dans la page** (lot C2, chemin rapide ou outil
+  `naviguer_page`) — session Chrome pilotée seulement :
+  - **« Descends »**, **« remonte »** (environ un écran), **« va en bas de
+    la page »**, **« remonte en haut »** ; « tu es déjà en bas » si la page
+    ne bouge plus. Aucun élément n'est touché.
+  - **« Reviens en arrière »**, **« avance »** : boutons retour / avant du
+    navigateur. **« Retour aux résultats »** : revient à la liste de la
+    dernière recherche YouTube.
+  - **« Ouvre la deuxième vidéo »**, **« le 3e lien »**, **« la
+    dernière »**, **« la suivante »**, **« la précédente »** : choisit dans
+    la liste déjà relevée, sans relancer la recherche. La liste est celle
+    des résultats de `chercher_et_ouvrir` tant qu'on est sur cette page ou
+    sur une vidéo ouverte depuis elle ; sinon, Jarvis relève les liens
+    visibles à l'écran (vidéos seulement si Julien dit « vidéo »). Ouvrir
+    un site ou cliquer ailleurs efface la liste.
+  - **« Actualise la page »**, **« recharge la page »**.
+  - Après chaque retour, avance, choix ou actualisation, Jarvis dit
+    **« Tu es sur « titre » »**. Le titre est une donnée externe (§1) : dit
+    par le code, nettoyé (sans « - YouTube », compteur ni balise) et
+    tronqué, jamais redonné au modèle ; l'historique ne garde que les mots
+    de Julien.
+  - « Click next video » et « clique sur la vidéo suivante » restent des
+    clics par texte (outil `cliquer`, bouton de YouTube).
+  - En mode `navigateur_defaut = "systeme"`, Jarvis dit que la navigation
+    ne marche que dans la session pilotée et propose d'y revenir : un
+    « oui » court dans les 30 s fait passer les sites dans Chrome piloté
+    pour la session en cours (le fichier de configuration ne change pas).
+  - Aucune page ouverte : Jarvis le dit, Chrome n'est pas lancé pour rien.
 - **Limites dites clairement** : le prompt système impose de dire en une
   phrase ce qui n'est pas possible (« Je peux ouvrir YouTube, mais je ne
   peux pas cliquer sur ça ») au lieu d'une formule vague, et de ne pas
@@ -242,6 +275,16 @@ Dans `scripts/boucle_voix.py` (F9 pour parler) :
   autorisé parce qu'il exige déjà une demande orale explicite de Julien.
 - **Aucune écriture web** : pas de formulaire, pas de connexion, pas
   d'achat. Le clic sur un élément de formulaire est refusé en code.
+- **Navigation par position (lot C2)** : « la deuxième » ne désigne jamais
+  un lien interdit. Les liens de connexion, de compte, de paiement, les
+  éléments de formulaire et les champs de saisie sont exclus du relevé
+  (ils ne sont pas numérotés) ; la cible est revérifiée avant l'ouverture
+  (adresse, puis élément avec `refus_element`) ; si la page d'arrivée est
+  une connexion ou un paiement (redirection), Jarvis revient en arrière et
+  refuse. Un retour / une avance qui tombe sur une telle page est annulé.
+  `naviguer_page` est bloqué après une lecture externe (hors de
+  `OUTILS_SANS_ECRITURE`, échec fermé). Fermer un onglet ou Chrome exige
+  toujours un « oui ».
 - **Journaux sans contenu (§7)** : ni capture, ni texte de page, ni
   transcription dans les journaux.
 - **Aucun serveur local** à cette étape : rien n'écoute sur un port (le
@@ -287,4 +330,12 @@ Dans `scripts/boucle_voix.py` (F9 pour parler) :
   dépend de la structure de la page YouTube (sélecteurs
   `ytd-video-renderer` / `a#video-title`, vérifiés le 26 nov. 2026) : à
   revoir si YouTube change sa page.
+- Lot C2 : la navigation ne fonctionne que dans la session pilotée.
+  Défiler suit la fenêtre principale : une zone qui défile seule (liste de
+  commentaires, cadre intégré) ne bouge pas. Le relevé des liens visibles
+  est limité à ce qui est à l'écran (30 liens au plus) : « le dixième
+  lien » d'une page longue peut demander de descendre d'abord. Pas de
+  « page suivante » des résultats YouTube (défilement infini : descendre
+  charge la suite). Le titre annoncé est celui de l'onglet : sur YouTube,
+  il peut mettre une seconde à se mettre à jour après un clic.
 - Étape suivante (6) : HUD local léger + lancement de session.
