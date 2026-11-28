@@ -34,6 +34,7 @@ regarder ton écran ? »…) est annulée.
 | `data/conversations/AAAA-MM-JJ.jsonl` (historique du jour) | rien n'est écrit — les échanges ne s'affichent donc pas dans la fenêtre |
 | `logs/tours-AAAA-MM-JJ.jsonl` (journal des tours) | rien n'est écrit : il ne contient pas de texte, mais les heures et les noms d'outils suffiraient à retracer la session |
 | `data/recherches.json` | rien n'est écrit : les recherches de la session vivent en mémoire (`recherche.Memoire`), avec leur propre travailleur, et sont annoncées / lues comme d'habitude |
+| `data/taches_longues.json` (lot LT) | rien n'est écrit : une tâche longue lancée en mode privé vit en mémoire avec son travailleur ; le travailleur normal est suspendu jusqu'à la sortie — voir `docs/etape-13-taches-longues.md` |
 | `data/connaissances.json` (notes) | « note que… » est refusé : « En mode privé, je ne garde pas de notes. » ; Jarvis ne propose pas de garder un résultat de recherche |
 | `data/hud-state.json` | état, langue et agents oui ; `transcription` toujours vide ; `"prive": true` |
 | `logs/boucle.log` (sortie console via `lancer_app.py`) | « Julien : (mode privé) » / « Jarvis : (mode privé) » à la place du texte |
