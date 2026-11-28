@@ -72,6 +72,19 @@ max_tokens_reponse = 400
 # Jarvis abandonne l'appel et le dit. Une seule reprise automatique est
 # faite avant d'abandonner : l'attente maximale est d'environ 2 fois ce délai.
 delai_cerveau_s = 20
+# Temps maximal d'UN tour complet (toutes les rondes d'outils), en secondes
+# (5 à 300). Passé ce délai, plus aucun appel au cerveau : Jarvis dit ce qui
+# est déjà fait, ou que le cerveau est trop lent (jamais de silence).
+delai_tour_s = 45
+
+[cerveau]
+# Effort de raisonnement du cerveau (lot B), pour Groq comme pour Claude :
+#   "bas"   rapide (défaut, comportement d'avant) — recommandé en voix ;
+#   "moyen" plus lent, mieux pour les questions complexes ;
+#   "auto"  bas, sauf question jugée complexe (pourquoi, compare, explique,
+#           plus de 25 mots…) : moyen pour ce tour seulement.
+# Prime sur [boucle] effort_groq / effort_anthropic. Mesures : docs/etape-11-cerveau.md.
+effort = "bas"
 
 [minuteur]
 # Minuteur persistant local (décision OUI, 21 nov. 2026). Les minuteurs sont

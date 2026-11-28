@@ -201,6 +201,30 @@ def langue_auto(donnees: dict | None = None) -> bool:
     return bool(valeur)
 
 
+EFFORTS_CERVEAU = ("bas", "moyen", "auto")
+_SYNONYMES_EFFORT = {"low": "bas", "medium": "moyen", "faible": "bas",
+                     "moyenne": "moyen"}
+
+
+def effort_cerveau(donnees: dict | None = None) -> str | None:
+    """Lot B : [cerveau] effort — « bas » (rapide, défaut), « moyen »
+    (questions complexes), « auto » (bas, moyen seulement quand la question
+    est complexe). None si la clé est absente (les anciens réglages
+    [boucle] effort_groq / effort_anthropic s'appliquent alors) ; « bas » si
+    la valeur est inconnue."""
+    donnees = charger_donnees() if donnees is None else donnees
+    valeur = section(donnees, "cerveau").get("effort")
+    if valeur is None:
+        return None
+    texte = str(valeur).strip().lower()
+    texte = _SYNONYMES_EFFORT.get(texte, texte)
+    if texte not in EFFORTS_CERVEAU:
+        print(f"Avertissement : [cerveau] effort inconnu ({valeur!r}) ; "
+              "« bas » utilisé.", file=sys.stderr)
+        return "bas"
+    return texte
+
+
 def fuseau(donnees: dict | None = None) -> ZoneInfo:
     """Fuseau horaire de [general] fuseau_horaire (America/Toronto si absent
     ou invalide). Jamais codé en dur ailleurs."""
