@@ -108,6 +108,11 @@ DOSSIER_CONVERSATIONS = RACINE / "data" / "conversations"
 # si le journal du jour n'existe pas encore.
 FICHIER_CONVERSATION = RACINE / "data" / "conversation.jsonl"
 FICHIER_DEMANDE_TEXTE = RACINE / "data" / "texte-demande.json"
+# Lot PR : interrupteur « Mode privé » ({"actif", "langue", "horodatage"},
+# jamais de contenu), consommé par la boucle vocale.
+FICHIER_DEMANDE_PRIVE = RACINE / "data" / "prive-demande.json"
+# Pastille « Privé » : violet, distinct de toutes les couleurs d'état.
+COULEUR_PRIVE = "#B57BFF"
 FICHIER_POSITION = RACINE / "data" / "app.json"
 GUIDE = RACINE / "docs" / "etape-7-application.md"
 SCRIPT_BOUCLE = RACINE / "scripts" / "boucle_voix.py"
@@ -516,6 +521,11 @@ TEXTES = {
         "note_fenetre": "Note — Jarvis",
         "menu_affichage": "Affichage",
         "menu_tableau": "Tableau de bord (afficher / masquer)",
+        "menu_prive_activer": "Mode privé : activer",
+        "menu_prive_quitter": "Mode privé : quitter",
+        "pastille_prive": "● PRIVÉ",
+        "detail_prive": ("Mode privé : rien n'est gardé, la conversation "
+                         "n'est ni écrite ni affichée."),
     },
     "en": {
         "etat_repos": "Jarvis is ready",
@@ -595,6 +605,11 @@ TEXTES = {
         "note_fenetre": "Note — Jarvis",
         "menu_affichage": "View",
         "menu_tableau": "Dashboard (show / hide)",
+        "menu_prive_activer": "Private mode: turn on",
+        "menu_prive_quitter": "Private mode: turn off",
+        "pastille_prive": "● PRIVATE",
+        "detail_prive": ("Private mode: nothing is kept; the conversation "
+                         "is neither written nor shown."),
     },
 }
 # Nom affiché d'un minuteur sans étiquette (« kind » du fichier timers.json).
@@ -684,7 +699,7 @@ def lire_etat(chemin: Path = FICHIER_ETAT) -> dict:
     (la boucle vocale n'a jamais écrit d'état), « repos » par défaut sinon.
     """
     defaut = {"etat": "arrete", "transcription": "", "erreur": "",
-              "langue": "", "present": False}
+              "langue": "", "present": False, "prive": False}
     try:
         donnees = json.loads(chemin.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -706,6 +721,8 @@ def lire_etat(chemin: Path = FICHIER_ETAT) -> dict:
         # Lot DB : état signalé par la boucle (cerveau, voix, navigateur).
         "agents": ({str(k): str(v) for k, v in donnees["agents"].items()}
                    if isinstance(donnees.get("agents"), dict) else {}),
+        # Lot PR : mode privé actif (pastille « Privé »).
+        "prive": donnees.get("prive") is True,
     }
 
 
@@ -1224,6 +1241,27 @@ def ecrire_demande_texte(chemin: Path, texte: str) -> None:
         pass
 
 
+def ecrire_demande_prive(chemin: Path, actif: bool, langue: str = "") -> None:
+    """Lot PR : demande d'entrer (actif=True) ou de sortir du mode privé,
+    pour la boucle (data/prive-demande.json, consommé à la lecture).
+
+    Ne contient aucun contenu de conversation. Écriture atomique ; toute
+    erreur est silencieuse.
+    """
+    try:
+        chemin.parent.mkdir(parents=True, exist_ok=True)
+        donnees = {
+            "actif": bool(actif),
+            "langue": langue if langue in LANGUES else "",
+            "horodatage": datetime.now(FUSEAU).isoformat(timespec="seconds"),
+        }
+        temporaire = chemin.with_suffix(".json.tmp")
+        temporaire.write_text(json.dumps(donnees), encoding="utf-8")
+        os.replace(temporaire, chemin)
+    except OSError:
+        pass
+
+
 _POLICES: dict = {}
 
 
@@ -1518,6 +1556,9 @@ class Application:
         self._compte_du_jour = None
         self._tableau_force: bool | None = None
         self._tableau_visible = False
+        # Lot PR : mode privé tel que signalé par la boucle (hud-state.json).
+        self.prive = False
+        self.libelle_menu_prive = self.t("menu_prive_activer")
 
         # -- Menu ------------------------------------------------------
         self._barre_menu = tk.Menu(self.fenetre)
@@ -1535,6 +1576,9 @@ class Application:
         self._menu_affichage = tk.Menu(self._barre_menu, tearoff=0)
         self._menu_affichage.add_command(label=self.t("menu_tableau"),
                                          command=self.basculer_tableau_de_bord)
+        # Lot PR : interrupteur du mode privé (entrée n° 1 du menu).
+        self._menu_affichage.add_command(label=self.libelle_menu_prive,
+                                         command=self.basculer_mode_prive)
         self._barre_menu.add_cascade(label=self.t("menu_affichage"),
                                      menu=self._menu_affichage)
         self.fenetre.config(menu=self._barre_menu)
@@ -1584,6 +1628,14 @@ class Application:
             wraplength=max(200, config["largeur"] - 340 - LARGEUR_MONITEUR))
         self.texte_detail.grid(row=1, column=1, sticky="nw", padx=10,
                                pady=(2, 0))
+        # Lot PR : pastille « ● PRIVÉ » (violet), visible en mode privé.
+        self.pastille_prive = ctk.CTkLabel(
+            self.entete, text=self.t("pastille_prive"),
+            font=_police(11, True, titre=True), fg_color=COULEUR_PRIVE,
+            text_color="#FFFFFF", corner_radius=10, height=22)
+        self.pastille_prive.grid(row=0, column=1, sticky="se", padx=10,
+                                 pady=(0, 2))
+        self.pastille_prive.grid_remove()
 
         # Lot DB : moniteur système (CPU, RAM, disque), jauges circulaires
         # comme celles des minuteurs ; une mesure toutes les 5 s.
@@ -1888,6 +1940,7 @@ class Application:
                 1, label=self.t("menu_affichage")),
             lambda: self._menu_affichage.entryconfigure(
                 0, label=self.t("menu_tableau")),
+            self._maj_mode_prive_affiche,
             lambda: self.titre_agents.configure(text=self._titre("agents")),
             lambda: self.titre_conversations.configure(
                 text=self._titre("conversations")),
@@ -2731,6 +2784,31 @@ class Application:
         self._tableau_force = not self._tableau_visible
         self._maj_tableau_de_bord()
 
+    # -- Mode privé (lot PR) -------------------------------------------
+
+    def basculer_mode_prive(self) -> None:
+        """Menu Affichage : demande à la boucle d'entrer en mode privé ou
+        d'en sortir. L'affichage suit l'état que la boucle signale
+        (data/hud-state.json), pas la demande : la pastille n'apparaît que
+        quand la boucle est vraiment en mode privé."""
+        ecrire_demande_prive(FICHIER_DEMANDE_PRIVE, not self.prive,
+                             self.langue)
+
+    def _maj_mode_prive_affiche(self) -> None:
+        """Pastille « Privé » et libellé du menu selon self.prive."""
+        self.libelle_menu_prive = self.t(
+            "menu_prive_quitter" if self.prive else "menu_prive_activer")
+        try:
+            self._menu_affichage.entryconfigure(
+                1, label=self.libelle_menu_prive)
+        except Exception:
+            pass
+        self.pastille_prive.configure(text=self.t("pastille_prive"))
+        if self.prive:
+            self.pastille_prive.grid()
+        else:
+            self.pastille_prive.grid_remove()
+
     # -- Micro : push-to-talk et interruption --------------------------
 
     def _style_micro(self, enfonce: bool) -> None:
@@ -3009,6 +3087,10 @@ class Application:
             recherches = charger_recherches()
             notes = charger_notes()
             entrees = lire_conversation()
+            prive = bool(etat.get("prive"))
+            if prive != self.prive:
+                self.prive = prive
+                self._maj_mode_prive_affiche()
 
             # État + détail.
             etat_affiche = etat["etat"]
@@ -3019,6 +3101,8 @@ class Application:
                 detail = (self.t("detail_erreur_prefixe")
                           + etat["erreur"][:110]
                           + ("…" if len(etat["erreur"]) > 110 else ""))
+            elif self.prive and etat_affiche == "repos":
+                detail = self.t("detail_prive")
             elif etat["transcription"]:
                 detail = (etat["transcription"][:90]
                           + ("…" if len(etat["transcription"]) > 90 else ""))

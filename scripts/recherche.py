@@ -100,6 +100,37 @@ def etat_vide() -> dict:
     return {"recherches": [], "next_id": 1}
 
 
+class Memoire:
+    """Stockage en mémoire, à la place de data/recherches.json (lot PR).
+
+    En mode privé, les recherches de la session vivent ici seulement : rien
+    n'est écrit sur le disque (ni fichier, ni verrou) et tout disparaît avec
+    l'objet à la sortie du mode. Toutes les fonctions de ce module qui
+    prennent un `chemin` acceptent aussi une Memoire.
+    """
+
+    name = "(mémoire)"
+
+    def __init__(self):
+        self.etat = etat_vide()
+        self.verrou = threading.RLock()
+
+    def __fspath__(self):  # garde-fou : jamais un vrai chemin de fichier.
+        raise TypeError("Memoire n'est pas un chemin de fichier")
+
+
+def _chemin(chemin):
+    """Path, ou la Memoire telle quelle."""
+    return chemin if isinstance(chemin, Memoire) else Path(chemin)
+
+
+def _verrou(chemin):
+    """Verrou du stockage : fichier .lock sur disque, ou verrou en mémoire."""
+    if isinstance(chemin, Memoire):
+        return chemin.verrou
+    return verrou_fichier(chemin)
+
+
 def _tache_valide(t) -> bool:
     return (isinstance(t, dict) and isinstance(t.get("id"), int)
             and isinstance(t.get("question"), str)
@@ -112,6 +143,9 @@ def charger(chemin: Path) -> dict:
     Fichier illisible : une copie est gardée à côté (« .illisible ») avant de
     repartir d'un état vide — on ne perd jamais une tâche en silence.
     """
+    if isinstance(chemin, Memoire):
+        with chemin.verrou:
+            return json.loads(json.dumps(chemin.etat))  # copie profonde.
     chemin = Path(chemin)
     try:
         donnees = json.loads(chemin.read_text(encoding="utf-8"))
@@ -138,7 +172,12 @@ def charger(chemin: Path) -> dict:
 
 
 def sauvegarder(chemin: Path, etat: dict) -> None:
-    """Écrit l'état de façon atomique (temporaire puis remplacement)."""
+    """Écrit l'état de façon atomique (temporaire puis remplacement) ; en
+    mémoire seulement pour une Memoire (mode privé)."""
+    if isinstance(chemin, Memoire):
+        with chemin.verrou:
+            chemin.etat = json.loads(json.dumps(etat, ensure_ascii=False))
+        return
     chemin = Path(chemin)
     chemin.parent.mkdir(parents=True, exist_ok=True)
     temporaire = chemin.with_name(chemin.name + ".tmp")
@@ -168,7 +207,7 @@ def _elaguer(etat: dict) -> None:
 
 def _modifier(chemin: Path, ident: int, **champs) -> dict | None:
     """Met à jour une tâche sous verrou ; retourne la tâche (copie) ou None."""
-    with verrou_fichier(chemin):
+    with _verrou(chemin):
         etat = charger(chemin)
         for t in etat["recherches"]:
             if t["id"] == ident:
@@ -200,7 +239,7 @@ def ajouter(chemin: Path, question: str, langue: str) -> dict:
     question = nettoyer_question(question)
     if not question:
         raise ValueError("question vide")
-    with verrou_fichier(chemin):
+    with _verrou(chemin):
         etat = charger(chemin)
         actives = sorted((t for t in etat["recherches"]
                           if t["statut"] == "en_cours"),
@@ -228,7 +267,7 @@ def ajouter(chemin: Path, question: str, langue: str) -> dict:
 def prendre_suivante(chemin: Path) -> dict | None:
     """Démarre la plus ancienne tâche en file — sauf si une autre tourne
     déjà (une seule recherche à la fois). Retourne la tâche démarrée."""
-    with verrou_fichier(chemin):
+    with _verrou(chemin):
         etat = charger(chemin)
         en_cours = [t for t in etat["recherches"] if t["statut"] == "en_cours"]
         if any(t.get("demarree_le") for t in en_cours):
@@ -266,7 +305,7 @@ def reprendre_au_demarrage(chemin: Path) -> dict:
     """
     bilan = {"reprises": [], "echecs": []}
     ref = maintenant()
-    with verrou_fichier(chemin):
+    with _verrou(chemin):
         etat = charger(chemin)
         change = False
         for t in etat["recherches"]:
@@ -314,7 +353,7 @@ def marquer_annoncees(chemin: Path, ids) -> None:
     ids = set(ids)
     if not ids:
         return
-    with verrou_fichier(chemin):
+    with _verrou(chemin):
         etat = charger(chemin)
         for t in etat["recherches"]:
             if t["id"] in ids:
@@ -569,7 +608,7 @@ class Travailleur:
     def __init__(self, chemin: Path, fabrique_session, synthetiser,
                  sur_fin=None, delai_max: float = DELAI_MAX_S,
                  marge_s: float = MARGE_CHIEN_DE_GARDE_S):
-        self.chemin = Path(chemin)
+        self.chemin = _chemin(chemin)
         self.fabrique_session = fabrique_session
         self.synthetiser = synthetiser
         self.sur_fin = sur_fin
@@ -590,6 +629,10 @@ class Travailleur:
                 # Tâche abandonnée par le chien de garde : elle ne doit pas
                 # relancer Chrome.
                 raise EchecRecherche("delai")
+            if self._arret.is_set():
+                # Lot PR : travailleur arrêté (sortie du mode privé, fin de
+                # la boucle) : on ne relance pas Chrome après la fermeture.
+                raise EchecRecherche("interrompue")
             if self._session is None:
                 self._session = self.fabrique_session()
             session = self._session
@@ -636,6 +679,11 @@ class Travailleur:
                 self._jeton += 1
             self.fermer_session()
             resultat = {"raison": "delai"}
+        if self._arret.is_set():
+            # Arrêté pendant la recherche : la tâche reste « en_cours » (elle
+            # sera reprise au prochain lancement ; en mode privé, la mémoire
+            # est jetée avec elle) — rien n'est écrit ni annoncé.
+            return None
         if "ok" in resultat:
             finale = terminer(self.chemin, tache["id"],
                               resultat["ok"]["reponse"],

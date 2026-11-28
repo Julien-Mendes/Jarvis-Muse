@@ -112,6 +112,7 @@ import subprocess
 import sys
 import threading
 import time
+import unicodedata
 import wave
 from datetime import datetime
 from pathlib import Path
@@ -286,12 +287,15 @@ def ecrire_etat_hud(etat: str, transcription: str = "",
     dans le champ « langue » : l'application y aligne ses textes et le
     surveillant des minuteurs ses annonces. Vide = champ omis (l'application
     garde sa langue du moment).
+
+    Lot PR : en mode privé, la transcription n'est jamais écrite (champ
+    vide) et « prive » vaut true (pastille « Privé » de l'application).
     """
     try:
         FICHIER_ETAT_HUD.parent.mkdir(parents=True, exist_ok=True)
         donnees = {
             "etat": etat,
-            "transcription": transcription,
+            "transcription": "" if PRIVE.actif else transcription,
             "erreur": erreur,
             "horodatage": datetime.now(FUSEAU).isoformat(timespec="seconds"),
         }
@@ -299,6 +303,7 @@ def ecrire_etat_hud(etat: str, transcription: str = "",
             donnees["langue"] = langue
         if AGENTS_HUD:
             donnees["agents"] = dict(AGENTS_HUD)
+        donnees["prive"] = bool(PRIVE.actif)
         temporaire = FICHIER_ETAT_HUD.with_suffix(".json.tmp")
         temporaire.write_text(
             json.dumps(donnees, ensure_ascii=False), encoding="utf-8")
@@ -356,7 +361,11 @@ def journaliser_echange(texte_utilisateur: str | None,
 
     `texte_utilisateur` None (lot R1) : message de Jarvis seul — annonce
     d'une recherche prête, sans phrase de Julien.
+
+    Lot PR : rien n'est écrit en mode privé.
     """
+    if PRIVE.actif:
+        return
     try:
         DOSSIER_CONVERSATIONS.mkdir(parents=True, exist_ok=True)
         maintenant = datetime.now(FUSEAU).isoformat(timespec="seconds")
@@ -467,7 +476,12 @@ def journaliser_tour(bilan: dict) -> None:
     estimé, noms des outils. JAMAIS le contenu des conversations, jamais
     l'audio, jamais les transcriptions (règle §7). Écriture jamais
     bloquante.
+
+    Lot PR : rien n'est écrit en mode privé (heures et noms d'outils
+    suffiraient à retracer l'activité de la session).
     """
+    if PRIVE.actif:
+        return
     try:
         DOSSIER_TOURS.mkdir(parents=True, exist_ok=True)
         ligne = {
@@ -500,6 +514,207 @@ def journaliser_tour(bilan: dict) -> None:
                 f.write(json.dumps(ligne, ensure_ascii=False) + "\n")
     except OSError:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Lot PR — mode privé (navigation privée)
+# ---------------------------------------------------------------------------
+# Pendant le mode privé, Jarvis répond normalement mais RIEN de la session
+# n'est écrit sur le disque : ni le journal du jour (data/conversations/),
+# ni le journal des tours (logs/tours-*.jsonl : heures et noms d'outils
+# trahiraient l'activité), ni les recherches (data/recherches.json : elles
+# vivent dans une recherche_mod.Memoire), ni les notes (refusées), ni la
+# transcription dans data/hud-state.json (champ vide), ni le texte des
+# échanges dans la sortie console (redirigée vers logs/boucle.log par
+# lancer_app.py). Les minuteurs, eux, restent des actions : ils sont écrits
+# dans data/timers.json pour sonner. Le contexte du modèle repart de zéro à
+# l'entrée ; celui de la session privée est jeté à la sortie, et celui
+# d'avant est rendu.
+
+# Demande de l'interrupteur de l'application : {"actif": bool, "langue":
+# "fr"|"en", "horodatage": ISO} — jamais de contenu de conversation.
+FICHIER_DEMANDE_PRIVE = RACINE / "data" / "prive-demande.json"
+
+
+class ModePrive:
+    """État du mode privé de la boucle (une seule instance : PRIVE)."""
+
+    def __init__(self):
+        self.actif = False
+        self.recherches = None   # recherche_mod.Memoire pendant le mode.
+        self.travailleur = None  # travailleur de recherche de la session.
+        self._historique_normal: list | None = None
+
+    def entrer(self, historique: list, confirmation: dict | None = None,
+               fabrique_travailleur=None) -> list:
+        """Entre en mode privé ; retourne le contexte de départ (vide).
+
+        Le contexte d'avant est mis de côté (en mémoire) ; une confirmation
+        en attente (« garder ce résumé ? »…) est annulée.
+        `fabrique_travailleur(memoire)` crée le travailleur de recherche de
+        la session privée (démarré ici), qui n'écrit que dans la mémoire.
+        """
+        if self.actif:
+            return historique
+        self._historique_normal = list(historique or [])
+        self.recherches = recherche_mod.Memoire()
+        if confirmation is not None:
+            confirmation.clear()
+        self.actif = True
+        if fabrique_travailleur is not None:
+            try:
+                self.travailleur = fabrique_travailleur(self.recherches)
+                self.travailleur.demarrer()
+            except Exception as erreur:  # la recherche est optionnelle.
+                print(f"Recherche privée indisponible : {erreur}",
+                      file=sys.stderr)
+                self.travailleur = None
+        return []
+
+    def sortir(self, confirmation: dict | None = None) -> list:
+        """Sort du mode privé : contexte privé, recherches et travailleur
+        jetés ; retourne le contexte d'avant le mode, intact."""
+        if not self.actif:
+            return []
+        travailleur, self.travailleur = self.travailleur, None
+        if travailleur is not None:
+            try:
+                travailleur.arreter()
+            except Exception:
+                pass
+        self.recherches = None
+        if confirmation is not None:
+            confirmation.clear()
+        restaure = self._historique_normal or []
+        self._historique_normal = None
+        self.actif = False
+        return restaure
+
+
+PRIVE = ModePrive()
+
+
+def _normaliser_commande(texte: str) -> str:
+    """Minuscules, sans accents ni ponctuation, espaces simples."""
+    t = unicodedata.normalize("NFD", str(texte or "").lower()
+                              .replace("’", "'"))
+    t = "".join(c for c in t if not unicodedata.combining(c))
+    t = re.sub(r"[^\w\s']", " ", t).replace("'", " ")
+    return " ".join(t.split())
+
+
+_DEBUT_CMD = (r"^(?:(?:ok|okay|hey|dis|jarvis|alors|bon|please|s il te plait|"
+              r"stp)\s+)*(?:(?:peux tu|tu peux|pourrais tu|can you|could you|"
+              r"would you|je veux|je voudrais|i want to|i d like to)\s+)?")
+_FIN_CMD = (r"(?:\s+(?:s il te plait|stp|svp|merci|please|thanks|thank you|"
+            r"now|maintenant|jarvis))*$")
+_PRIVE_FR = r"(?:le\s+|la\s+|en\s+)?(?:mode\s+prive|navigation\s+privee)"
+_MOTIFS_PRIVE = [
+    # (motif, action, langue)
+    (r"(?:passe|passer|repasse|mets|mettre|met|active|activer|lance|lancer|"
+     r"bascule|basculer|demarre|demarrer|ouvre|ouvrir)(?:\s+(?:toi|moi|nous))?"
+     r"\s+" + _PRIVE_FR, "entrer", "fr"),
+    (r"(?:en\s+)?(?:mode\s+prive|navigation\s+privee)(?:\s+(?:active|"
+     r"activee|on))?", "entrer", "fr"),
+    (r"(?:sors|sortir|sort|quitte|quitter|desactive|desactiver|arrete|"
+     r"arreter|coupe|couper|ferme|fermer|termine|terminer)"
+     r"(?:\s+(?:du|de\s+la|de|le|la))?\s+(?:mode\s+prive|"
+     r"navigation\s+privee)", "sortir", "fr"),
+    (r"fin\s+(?:du\s+mode\s+prive|de\s+la\s+navigation\s+privee)",
+     "sortir", "fr"),
+    (r"(?:(?:repasse|reviens|retourne|passe|retour|remets|remet|mets)"
+     r"(?:\s+(?:toi|moi))?\s+(?:en|au|a)\s+)?mode\s+normal", "sortir", "fr"),
+    (r"(?:go|switch|turn|put|enter|start|activate|enable|open|use)"
+     r"(?:\s+(?:on|into|to|in|me\s+in|me\s+into))?(?:\s+the)?"
+     r"\s+private(?:\s+(?:mode|browsing))?(?:\s+on)?", "entrer", "en"),
+    (r"private\s+(?:mode|browsing)(?:\s+on)?", "entrer", "en"),
+    (r"(?:exit|leave|quit|stop|end|disable|deactivate|close|turn\s+off|"
+     r"switch\s+off|get\s+out\s+of|come\s+out\s+of)(?:\s+the)?"
+     r"\s+private\s+(?:mode|browsing)", "sortir", "en"),
+    (r"(?:turn|switch)\s+(?:the\s+)?private\s+(?:mode|browsing)\s+off",
+     "sortir", "en"),
+    (r"private\s+(?:mode|browsing)\s+off", "sortir", "en"),
+    (r"(?:(?:go|switch|get|come|return|turn)(?:\s+back)?\s+(?:to|into)\s+"
+     r"|back\s+to\s+)?normal\s+mode", "sortir", "en"),
+]
+_MOTIFS_PRIVE = [(re.compile(_DEBUT_CMD + motif + _FIN_CMD), action, langue)
+                 for motif, action, langue in _MOTIFS_PRIVE]
+
+
+def detecter_mode_prive(texte: str) -> dict | None:
+    """« mode privé », « sors du mode privé », « private mode », « normal
+    mode »… (phrase entière, sans appel au modèle).
+
+    Retour : {"action": "entrer"|"sortir", "langue": "fr"|"en"} ou None. Une
+    question (« c'est quoi le mode privé de Chrome ? ») n'est pas une
+    commande : la phrase entière doit être la commande.
+    """
+    t = _normaliser_commande(texte)
+    if not t or len(t.split()) > 12:
+        return None
+    for motif, action, langue in _MOTIFS_PRIVE:
+        if motif.match(t):
+            return {"action": action, "langue": langue}
+    return None
+
+
+def lire_demande_prive() -> dict | None:
+    """Lit (et consomme) la demande de l'interrupteur de l'application.
+
+    data/prive-demande.json : {"actif": bool, "langue": ..., "horodatage"}.
+    Supprimé dès sa lecture ; périmé (> 5 min) = ignoré. Ne lève jamais.
+    Retour : {"action": "entrer"|"sortir", "langue": ...} ou None.
+    """
+    try:
+        donnees = json.loads(FICHIER_DEMANDE_PRIVE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    try:
+        FICHIER_DEMANDE_PRIVE.unlink(missing_ok=True)
+    except OSError:
+        pass
+    if not isinstance(donnees, dict) or not isinstance(
+            donnees.get("actif"), bool):
+        return None
+    try:
+        moment = datetime.fromisoformat(str(donnees.get("horodatage", "")))
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=FUSEAU)
+        age = (datetime.now(FUSEAU) - moment).total_seconds()
+    except ValueError:
+        return None
+    if age < 0 or age > FRAICHEUR_DEMANDE_TEXTE:
+        return None
+    langue = str(donnees.get("langue", ""))
+    return {"action": "entrer" if donnees["actif"] else "sortir",
+            "langue": langue if langue in langue_tour_mod.LANGUES else ""}
+
+
+def basculer_mode_prive(demande: dict, historique: list,
+                        confirmation: dict | None = None,
+                        fabrique_travailleur=None,
+                        langue_defaut: str = "en") -> dict:
+    """Applique « entrer » / « sortir » ; sans appel au modèle.
+
+    Retour : {"texte": annonce, "langue": langue de l'annonce,
+    "historique": contexte du modèle à utiliser désormais, "change": bool}.
+    """
+    langue = demande.get("langue") or langue_defaut
+    if langue not in langue_tour_mod.LANGUES:
+        langue = "en"
+    if demande.get("action") == "entrer":
+        if PRIVE.actif:
+            return {"texte": msg(langue, "prive_deja"), "langue": langue,
+                    "historique": historique, "change": False}
+        nouveau = PRIVE.entrer(historique, confirmation, fabrique_travailleur)
+        return {"texte": msg(langue, "prive_active"), "langue": langue,
+                "historique": nouveau, "change": True}
+    if not PRIVE.actif:
+        return {"texte": msg(langue, "prive_pas_actif"), "langue": langue,
+                "historique": historique, "change": False}
+    restaure = PRIVE.sortir(confirmation)
+    return {"texte": msg(langue, "prive_desactive"), "langue": langue,
+            "historique": restaure, "change": True}
 
 
 def lire_ptt_hud() -> bool:
@@ -663,7 +878,9 @@ def dire(texte: str, langue: str, interruption: threading.Event,
     la lecture est arrêtée. Si la voix est indisponible, le texte est déjà
     affiché à l'écran : la réponse n'est jamais perdue.
     """
-    print(f"Jarvis : {texte}", flush=True)
+    # Lot PR : la console finit dans logs/boucle.log — rien en mode privé.
+    print("Jarvis : (mode privé)" if PRIVE.actif else f"Jarvis : {texte}",
+          flush=True)
     if voix is not None:
         try:
             complet = voix.lire(texte, langue, vitesse or 1.0, interruption,
@@ -1952,6 +2169,14 @@ MESSAGES = {
         "transcription_impossible": "Désolé Julien, je n'ai pas pu transcrire ce que tu as dit. Réessaie en maintenant F9.",
         "historique_externe": ("[Contenu externe lu à Julien à voix haute ; "
                                "non conservé dans l'historique.]"),
+        # Lot PR — mode privé.
+        "prive_active": "Mode privé activé : rien ne sera gardé.",
+        "prive_desactive": "Mode privé désactivé.",
+        "prive_deja": "Le mode privé est déjà actif, Julien : rien n'est gardé.",
+        "prive_pas_actif": "Le mode privé n'est pas actif, Julien.",
+        "prive_note_refusee": "En mode privé, je ne garde pas de notes.",
+        "prive_texte": ("Le mode privé ne s'active que dans la boucle vocale "
+                        "(avec l'application), Julien."),
     },
     "en": {
         "ecran_vu": "Here's what I see on your screen, Julien: {description}",
@@ -2068,6 +2293,14 @@ MESSAGES = {
         "transcription_impossible": "Sorry Julien, I couldn't transcribe what you said. Try again by holding F9.",
         "historique_externe": ("[External content read aloud to Julien; not "
                                "kept in history.]"),
+        # Lot PR — private mode.
+        "prive_active": "Private mode on: nothing will be kept.",
+        "prive_desactive": "Private mode off.",
+        "prive_deja": "Private mode is already on, Julien: nothing is kept.",
+        "prive_pas_actif": "Private mode isn't on, Julien.",
+        "prive_note_refusee": "In private mode, I don't keep notes.",
+        "prive_texte": ("Private mode only works in the voice loop (with "
+                        "the app), Julien."),
     },
 }
 
@@ -3272,8 +3505,11 @@ def nettoyer_etiquette_rappel(sujet: str) -> str:
 # Recherche différée (lot R1) — voir scripts/recherche.py
 # ---------------------------------------------------------------------------
 
-def chemin_recherches(config: dict) -> Path:
-    """data/recherches.json, ou config["fichier_recherches"] (tests)."""
+def chemin_recherches(config: dict):
+    """data/recherches.json, ou config["fichier_recherches"] (tests) ; en
+    mode privé, la mémoire de la session (recherche_mod.Memoire, lot PR)."""
+    if PRIVE.actif and PRIVE.recherches is not None:
+        return PRIVE.recherches
     return Path(config.get("fichier_recherches")
                 or recherche_mod.chemin_donnees_defaut())
 
@@ -3298,6 +3534,10 @@ def executer_lancement_recherche(demande: dict, historique: list,
     et faite au prochain lancement de la boucle — on le dit.
     """
     langue = str(config["langue"])
+    if PRIVE.actif:
+        # Lot PR : la tâche vit en mémoire ; seul le travailleur de la
+        # session privée la voit.
+        travailleur = PRIVE.travailleur
     question = (demande.get("sujet") or "").strip()
     if not question:
         question = _derniere_phrase_utilisateur(historique)
@@ -3356,8 +3596,9 @@ def executer_suivi_recherche(demande: dict, config: dict) -> dict:
     resultat = {"externe": True,
                 "historique": recherche_mod.texte(langue, "historique_lecture",
                                                   q=q)}
-    # Lot KB : proposer de garder le résumé (sur un oui oral seulement).
-    if not tache.get("gardee_en_note"):
+    # Lot KB : proposer de garder le résumé (sur un oui oral seulement) —
+    # jamais en mode privé (lot PR : aucune note n'y est gardée).
+    if not tache.get("gardee_en_note") and not PRIVE.actif:
         phrase += " " + connaissances_mod.texte(langue, "proposer_note")
         resultat["proposer_note"] = tache["id"]
     resultat["texte"] = phrase
@@ -3382,6 +3623,8 @@ def executer_ajout_note(demande: dict, config: dict,
     n'est exécuté. L'historique du modèle n'en garde qu'un repère.
     """
     langue = str(config["langue"])
+    if PRIVE.actif:  # lot PR : rien n'est gardé en mode privé.
+        return {"texte": msg(langue, "prive_note_refusee")}
     texte_note = (demande.get("texte") or "").strip()
     if not texte_note:
         return {"texte": connaissances_mod.texte(langue, "note_vide")}
@@ -3402,6 +3645,8 @@ def executer_garder_recherche(ident: int, config: dict) -> str:
     """Garde le résumé d'une recherche prête dans les notes (après le oui
     oral de Julien) ; source « recherche »."""
     langue = str(config["langue"])
+    if PRIVE.actif:  # lot PR.
+        return msg(langue, "prive_note_refusee")
     chemin = chemin_recherches(config)
     try:
         tache = recherche_mod.obtenir(chemin, int(ident))
@@ -3444,7 +3689,7 @@ def executer_chercher_connaissance(requete: str, config: dict) -> dict:
 def armer_proposition_note(confirmation: dict | None, ident) -> None:
     """Met en attente « garder ce résumé dans les notes ? » : seul un oui
     oral court au tour suivant (et dans DELAI_CONFIRMATION_S) l'exécute."""
-    if confirmation is None or ident is None:
+    if confirmation is None or ident is None or PRIVE.actif:
         return
     confirmation["outil"] = "garder_note"
     confirmation["arguments"] = {"recherche_id": ident}
@@ -3474,7 +3719,7 @@ def formater_annonce_recherches(taches: list, langue: str) -> tuple:
     phrase = recherche_mod.formater_annonce(taches, langue)
     pretes = [t for t in taches if t["statut"] == "prete"]
     if (phrase and len(pretes) == 1 and pretes[0].get("reponse")
-            and not pretes[0].get("gardee_en_note")):
+            and not pretes[0].get("gardee_en_note") and not PRIVE.actif):
         return (phrase + " " + connaissances_mod.texte(langue, "proposer_note"),
                 pretes[0]["id"])
     return phrase, None
@@ -4153,6 +4398,12 @@ def main() -> int:
         if not args.texte.strip():
             print("Erreur : --texte est vide.", file=sys.stderr)
             return 1
+        bascule_texte = detecter_mode_prive(args.texte)
+        if bascule_texte is not None:
+            # Lot PR : un tour isolé ne peut pas « rester » en mode privé ;
+            # rien n'est journalisé.
+            print("Jarvis : " + msg(bascule_texte["langue"], "prive_texte"))
+            return 0
         cerveau = None
         # Chemins rapides (minuteur, écran, navigateur) n'ont pas besoin
         # du cerveau : on ne le crée que si aucun ne s'applique — sinon
@@ -4258,6 +4509,28 @@ def main() -> int:
     travailleur_recherche.demarrer()
     file_annonces.put(True)  # annonces du démarrage.
 
+    def _travailleur_prive(memoire):
+        """Lot PR : travailleur de recherche de la session privée — il
+        n'écrit que dans `memoire`, jetée à la sortie du mode."""
+        return recherche_mod.Travailleur(
+            memoire, lambda: SessionNavigateur(fond=True),
+            fabriquer_synthetiseur(config),
+            sur_fin=lambda _tache: file_annonces.put(True))
+
+    def _annoncer_bascule(bascule: dict) -> None:
+        """Lot PR : dit « Mode privé activé / désactivé » (sans modèle)."""
+        changer_phase("parle")
+        ecrire_etat_hud("reponse", langue=bascule["langue"])
+        evenement_interruption.clear()
+        dire(bascule["texte"], bascule["langue"], evenement_interruption,
+             vitesse=float(config["vitesse_voix"]), voix=voix_residente)
+        ecrire_etat_hud("repos", langue=bascule["langue"])
+        changer_phase("repos")
+        if bascule["change"] and not PRIVE.actif:
+            # Retour au mode normal : les recherches normales terminées
+            # pendant le mode privé sont annoncées maintenant.
+            file_annonces.put(True)
+
     print("Boucle vocale Jarvis — prête.")
     print("Maintenez F9 pour parler, relâchez pour envoyer.")
     print("F9 pendant une réponse l'interrompt. Ctrl+C pour quitter.")
@@ -4342,6 +4615,7 @@ def main() -> int:
             demarrage_hud = False
             texte_demande = None
             annonce = False
+            demande_prive = None
             while True:
                 if evenement_presse.wait(timeout=0.2):
                     evenement_presse.clear()
@@ -4352,6 +4626,10 @@ def main() -> int:
                 texte_demande = lire_demande_texte()
                 if texte_demande is not None:
                     break
+                # Lot PR : interrupteur « Mode privé » de l'application.
+                demande_prive = lire_demande_prive()
+                if demande_prive is not None:
+                    break
                 # Lot R1 : une recherche s'est terminée (ou démarrage) et
                 # Jarvis est au repos : on l'annonce maintenant.
                 if not file_annonces.empty() and lire_phase() == "repos":
@@ -4359,15 +4637,24 @@ def main() -> int:
                     break
             if lire_phase() != "repos":
                 continue
+            if demande_prive is not None:
+                bascule = basculer_mode_prive(
+                    demande_prive, historique, confirmation_en_attente,
+                    _travailleur_prive, str(config["langue"]))
+                historique = bascule["historique"]
+                _annoncer_bascule(bascule)
+                continue
             if annonce:
                 while not file_annonces.empty():
                     file_annonces.get_nowait()
                 try:
-                    a_dire = recherche_mod.a_annoncer(fichier_recherches)
+                    # Lot PR : en mode privé, la mémoire de la session.
+                    source_annonces = chemin_recherches(config)
+                    a_dire = recherche_mod.a_annoncer(source_annonces)
                     texte_annonce, a_proposer = formater_annonce_recherches(
                         a_dire, str(config["langue"]))
                     recherche_mod.marquer_annoncees(
-                        fichier_recherches, [t["id"] for t in a_dire])
+                        source_annonces, [t["id"] for t in a_dire])
                 except OSError as erreur:
                     print(f"Recherches : {erreur}", file=sys.stderr)
                     texte_annonce, a_proposer = "", None
@@ -4401,7 +4688,8 @@ def main() -> int:
                 bilan["enregistrement_s"] = 0.0
                 bilan["transcription_s"] = 0.0
                 changer_phase("traitement")
-                print(f"Julien (texte) : {transcription}")
+                print("Julien (texte) : (mode privé)" if PRIVE.actif
+                      else f"Julien (texte) : {transcription}")
                 ecrire_etat_hud("reflexion", transcription=transcription)
             else:
                 evenement_relache.clear()  # avant la phase (voir P1).
@@ -4456,8 +4744,19 @@ def main() -> int:
                     ecrire_etat_hud("repos")
                     changer_phase("repos")
                     continue
-                print(f"Julien : {transcription}")
+                print("Julien : (mode privé)" if PRIVE.actif
+                      else f"Julien : {transcription}")
                 ecrire_etat_hud("reflexion", transcription=transcription)
+            # Lot PR : « mode privé » / « sors du mode privé » : sans
+            # modèle, rien n'est journalisé (ni la commande ni l'annonce).
+            demande_bascule = detecter_mode_prive(transcription)
+            if demande_bascule is not None:
+                bascule = basculer_mode_prive(
+                    demande_bascule, historique, confirmation_en_attente,
+                    _travailleur_prive, str(config["langue"]))
+                historique = bascule["historique"]
+                _annoncer_bascule(bascule)
+                continue
             # Lot L1 : langue du tour (Whisper, puis le texte, puis la
             # config) ; tout le tour suit cette copie de la config.
             config_tour = config_du_tour(
@@ -4481,7 +4780,9 @@ def main() -> int:
                                    confirmation_en_attente,
                                    session_navigateur, mesures=bilan,
                                    etat_tour=etat_tour, repli=repli_cerveau,
-                                   travailleur_recherche=travailleur_recherche,
+                                   travailleur_recherche=(
+                                       PRIVE.travailleur if PRIVE.actif
+                                       else travailleur_recherche),
                                    source_note=("texte" if texte_demande
                                                 is not None else "voix"))
             journaliser_echange(transcription, reponse)
@@ -4531,6 +4832,7 @@ def main() -> int:
         # Une recherche en cours reste « en_cours » dans le fichier : elle
         # sera reprise (ou marquée en échec) au prochain lancement.
         travailleur_recherche.arreter()
+        PRIVE.sortir()  # lot PR : mémoire privée jetée (sans effet sinon).
         session_navigateur.fermer()
     return 0
 
