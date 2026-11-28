@@ -323,9 +323,11 @@ def declencher_dus(chemin: Path, debut_surveillance=None,
     with verrou_fichier(chemin):
         etat = charger(chemin)
         minuteurs = etat["timers"]
+        # Un minuteur en pause (lot U3) ne sonne jamais.
         dus = sorted(
             (m for m in minuteurs
-             if datetime.fromisoformat(m["due"]) <= ref),
+             if not m.get("paused")
+             and datetime.fromisoformat(m["due"]) <= ref),
             key=lambda m: m["due"],
         )
         if not dus:
@@ -432,6 +434,11 @@ def cmd_lister(args) -> int:
         reste = due - ref
         quoi = minuteur["kind"] + (
             f" « {minuteur['label']} »" if minuteur["label"] else "")
+        if minuteur.get("paused"):
+            secondes = int(float(minuteur.get("remaining_s") or 0))
+            print(f"- n° {minuteur['id']} — {quoi} : en pause "
+                  f"({formater_duree(max(1, round(secondes / 60)))} restantes)")
+            continue
         if reste.total_seconds() <= 0:
             detail = "échue (sera annoncée au prochain déclenchement)"
         else:
@@ -486,6 +493,68 @@ def cmd_annuler(args) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# Pause, reprise, annulation par numéro (lot U3 : tuiles de l'application)
+# ---------------------------------------------------------------------------
+# Un minuteur en pause garde le temps qui lui restait (« remaining_s ») et ne
+# sonne pas ; à la reprise, l'échéance repart de maintenant. Seuls les
+# comptes à rebours se mettent en pause : un rappel à heure fixe s'annule.
+
+def _modifier(chemin: Path, ident: int, action) -> dict | None:
+    """Lit, applique `action(minuteur, ref)` au minuteur n° `ident`, écrit —
+    sous verrou. `action` retourne False pour ne rien changer. Retourne le
+    minuteur modifié (ou retiré), None s'il est introuvable ou inchangé."""
+    ref = maintenant()
+    with verrou_fichier(chemin):
+        etat = charger(chemin)
+        for minuteur in etat["timers"]:
+            if minuteur.get("id") == ident:
+                break
+        else:
+            return None
+        if action(etat, minuteur, ref) is False:
+            return None
+        sauvegarder(chemin, etat)
+    return minuteur
+
+
+def mettre_en_pause(chemin: Path, ident: int) -> dict | None:
+    """Met un compte à rebours en pause (temps restant gardé)."""
+    def pause(_etat, minuteur, ref):
+        if minuteur.get("kind") != "timer" or minuteur.get("paused"):
+            return False
+        reste = (datetime.fromisoformat(minuteur["due"]) - ref).total_seconds()
+        if reste <= 0:
+            return False  # déjà échu : il va sonner.
+        minuteur["paused"] = True
+        minuteur["remaining_s"] = round(reste, 1)
+    return _modifier(chemin, ident, pause)
+
+
+def reprendre(chemin: Path, ident: int) -> dict | None:
+    """Reprend un minuteur en pause : échéance = maintenant + temps restant ;
+    la création est décalée d'autant (la jauge garde sa durée totale)."""
+    def reprise(_etat, minuteur, ref):
+        if not minuteur.get("paused"):
+            return False
+        reste = max(1.0, float(minuteur.pop("remaining_s", 0) or 0))
+        minuteur.pop("paused", None)
+        ancienne = datetime.fromisoformat(minuteur["due"])
+        due = ref + timedelta(seconds=reste)
+        if minuteur.get("created"):
+            cree = datetime.fromisoformat(minuteur["created"])
+            minuteur["created"] = (cree + (due - ancienne)).isoformat()
+        minuteur["due"] = due.isoformat()
+    return _modifier(chemin, ident, reprise)
+
+
+def annuler_numero(chemin: Path, ident: int) -> dict | None:
+    """Annule le minuteur n° `ident` (en pause ou non)."""
+    def retrait(etat, minuteur, _ref):
+        etat["timers"] = [m for m in etat["timers"] if m is not minuteur]
+    return _modifier(chemin, ident, retrait)
+
+
 def cmd_declencher(args) -> int:
     messages = declencher_dus(args.donnees, langue=args.langue)
     if not messages:
@@ -512,7 +581,7 @@ def cmd_surveiller(args) -> int:
         while True:
             etat = charger(args.donnees)
             prochaines = [datetime.fromisoformat(m["due"])
-                          for m in etat["timers"]]
+                          for m in etat["timers"] if not m.get("paused")]
             if prochaines:
                 attente = max(
                     0.0,

@@ -10,3 +10,9 @@
 # darkdetect + packaging + Pillow (installés automatiquement).
 
 customtkinter==6.0.0
+
+# Lot DB (tableau de bord) : moniteur système CPU / RAM / disque. Une mesure
+# toutes les 5 s, non bloquante (cpu_percent(interval=None)). Sans psutil,
+# l'application marche et le moniteur affiche « — ». Roues précompilées
+# pour Python 3.14 / Windows (vérifié le 28 nov. 2026 : 7.2.2).
+psutil==7.2.2

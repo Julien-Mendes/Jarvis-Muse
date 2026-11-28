@@ -170,6 +170,13 @@ def charger_minuteurs(chemin: Path = FICHIER_MINUTEURS) -> list:
         due = _analyser_echeance(minuteur.get("due"))
         if due is None:
             continue
+        if minuteur.get("paused"):
+            # Lot U3 : en pause, le temps restant est figé (jamais « échu »).
+            try:
+                reste = float(minuteur.get("remaining_s") or 0)
+            except (TypeError, ValueError):
+                reste = 0.0
+            due = datetime.now(FUSEAU) + timedelta(seconds=max(0.0, reste))
         resultat.append({
             "due": due,
             "label": str(minuteur.get("label", "")),

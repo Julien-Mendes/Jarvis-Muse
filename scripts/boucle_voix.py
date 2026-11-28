@@ -251,6 +251,19 @@ FICHIER_ETAT_HUD = RACINE / "data" / "hud-state.json"
 FICHIER_PTT_HUD = RACINE / "data" / "hud-ptt.json"
 
 
+# Lot DB : état des capacités pour le panneau Agents de l'application
+# (« cerveau » / « voix » : « erreur » après un échec ; « navigateur » :
+# « actif » quand la session Chrome pilotée est ouverte). Écrit avec l'état.
+AGENTS_HUD: dict = {}
+
+
+def noter_agents(**etats) -> None:
+    """Met à jour l'état signalé des capacités (voir AGENTS_HUD)."""
+    for nom, valeur in etats.items():
+        if valeur in ("actif", "veille", "erreur"):
+            AGENTS_HUD[nom] = valeur
+
+
 def ecrire_etat_hud(etat: str, transcription: str = "",
                     erreur: str = "", langue: str = "") -> None:
     """Écrit l'état courant pour le HUD (scripts/hud.py) — jamais bloquant.
@@ -275,6 +288,8 @@ def ecrire_etat_hud(etat: str, transcription: str = "",
         }
         if langue in langue_tour_mod.LANGUES:
             donnees["langue"] = langue
+        if AGENTS_HUD:
+            donnees["agents"] = dict(AGENTS_HUD)
         temporaire = FICHIER_ETAT_HUD.with_suffix(".json.tmp")
         temporaire.write_text(
             json.dumps(donnees, ensure_ascii=False), encoding="utf-8")
@@ -4047,6 +4062,7 @@ def main() -> int:
                         verifier_ptt=lire_ptt_hud if demarrage_hud else None)
                 except Exception as erreur:
                     print(f"Erreur micro : {erreur}", file=sys.stderr)
+                    noter_agents(voix="erreur")
                     ecrire_etat_hud("erreur", erreur="Micro indisponible")
                     changer_phase("repos")
                     continue
@@ -4105,6 +4121,11 @@ def main() -> int:
                                    source_note=("texte" if texte_demande
                                                 is not None else "voix"))
             journaliser_echange(transcription, reponse)
+            noter_agents(
+                cerveau="erreur" if bilan.get("erreur") else "veille",
+                voix="veille",
+                navigateur=("actif" if session_navigateur.active()
+                            else "veille"))
             historique.append({"role": "user", "content": transcription})
             # Règles §1/§2 : un texte venu de l'extérieur (description
             # d'écran…) est lu à Julien mais jamais redonné au modèle.

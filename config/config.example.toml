@@ -162,6 +162,14 @@ theme = "or_et_nuit"
 # Intervalle de relecture de l'état, de la conversation et des minuteurs
 # (ms) — data/hud-state.json, data/conversation.jsonl, data/timers.json.
 intervalle_ms = 500
+# Animations (lot U5) : éclosion de l'orbe au changement d'état, orbe qui
+# pulse et tourne pendant l'écoute / la réflexion / la réponse, fondu des
+# nouveaux éléments des panneaux. Aucune au repos. false = tout immobile.
+animations = true
+# Tableau de bord (lot DB) : colonne Agents + Conversations, affichée quand
+# la fenêtre fait au moins 1100 px de large (menu Affichage pour la forcer).
+# Le moniteur système (CPU, RAM, disque) est toujours dans l'en-tête.
+tableau_de_bord = true
 # La position et la taille exactes sont mémorisées dans data/app.json
 # (gitignoré) quand la fenêtre est déplacée ou redimensionnée.
 

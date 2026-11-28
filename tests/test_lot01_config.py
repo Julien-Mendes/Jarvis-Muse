@@ -47,7 +47,7 @@ CLES_LUES = {
             "toujours_au_premier_plan": "hud", "intervalle_ms": "hud"},
     "app": {"active": "app", "largeur": "app", "hauteur": "app",
             "toujours_au_premier_plan": "app", "intervalle_ms": "app",
-            "theme": "app"},
+            "theme": "app", "animations": "app", "tableau_de_bord": "app"},
     "session": {"lire_a_dire": "lancer_session", "annoncer_minuteurs_du_jour":
                 "lancer_session", "demarrer_hud": "lancer_session"},
 }

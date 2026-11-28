@@ -22,8 +22,14 @@ Ce que montre la fenêtre :
   - Panneau Connaissances (lot KB) : notes personnelles lues dans
     data/connaissances.json (texte + date), la plus récente d'abord ; la
     croix d'une note la supprime après une seconde confirmation (« Supprimer ? »
-    pendant 4 s). C'est la seule écriture de l'application dans data/ (hors
-    PTT, demande texte et géométrie), faite sous verrou par connaissances.py.
+    pendant 4 s). Cette suppression et les actions des tuiles de minuteur
+    (lot U3 : pause, reprise, annulation, via minuteur.py) sont les seules
+    écritures de l'application dans data/ (hors PTT, demande texte et
+    géométrie), toutes sous verrou.
+  - Tableau de bord (lots DB, U5) : moniteur système (CPU, RAM, disque,
+    psutil, toutes les 5 s) dans l'en-tête ; colonne Agents + Conversations
+    quand la fenêtre est large ; animations courtes (aucune au repos,
+    [app] animations = false pour les couper).
   - Bouton micro à maintenir enfoncé = push-to-talk (même mécanisme que
     le HUD : data/hud-ptt.json) ; bouton « Interrompre » pour couper la
     réponse en cours (comme F9 pendant une réponse).
@@ -133,6 +139,12 @@ DEFAUTS = {
     # « jarvis_bleu » (couleurs d'origine, thème de repli) ou
     # « clair_studio ». Lu avec config_jarvis (config.toml, config.local.toml).
     "theme": "or_et_nuit",
+    # Lot U5 : animations de l'orbe et des panneaux (false = tout immobile,
+    # l'orbe ne pulse plus non plus).
+    "animations": True,
+    # Lot DB : colonne Agents + Conversations, affichée quand la fenêtre est
+    # assez large (LARGEUR_TABLEAU_BORD) ; false = jamais.
+    "tableau_de_bord": True,
 }
 
 # ---------------------------------------------------------------------------
@@ -373,6 +385,19 @@ def couleur_statut(cle: str, repli: str) -> str:
     return (STYLE.get("statut") or {}).get(cle, repli)
 
 
+def couleur_etat(cle: str) -> str:
+    """Couleur d'un statut (« ok », « actif », « attente », « erreur »,
+    « inactif ») : celle du thème stylé, sinon prise dans la palette
+    classique (orbe, accent, texte faible) — même sens dans tous les thèmes."""
+    repli = {"ok": ETATS["reponse"][1], "actif": COULEUR_ACCENT,
+             "attente": ETATS["reflexion"][1], "erreur": ETATS["erreur"][1],
+             "inactif": COULEUR_TEXTE_FAIBLE}.get(cle, COULEUR_TEXTE_FAIBLE)
+    return couleur_statut(cle, repli)
+
+
+STATUT_DES_AGENTS = {"actif": "actif", "veille": "inactif", "erreur": "erreur"}
+
+
 def titre_affiche(texte: str) -> str:
     """Titre de panneau : en capitales dans le thème stylé."""
     return texte.upper() if STYLE.get("titres_majuscules") else texte
@@ -462,6 +487,35 @@ TEXTES = {
         "vide": ("Aucune conversation pour l'instant.\n"
                  "Maintenez F9 (ou le bouton micro) pour parler à Jarvis,\n"
                  "ou écrivez votre message ci-dessous."),
+        # Lot DB / U3 / U5
+        "minuteur_pause": "• {quoi} : en pause ({duree})",
+        "systeme_cpu": "CPU",
+        "systeme_ram": "RAM",
+        "systeme_disque": "Disque",
+        "systeme_indispo": "—",
+        "agents": "Agents",
+        "agent_cerveau": "Cerveau",
+        "agent_voix": "Voix",
+        "agent_navigateur": "Navigateur",
+        "agent_minuteurs": "Minuteurs",
+        "agent_recherches": "Recherches",
+        "agent_notes": "Notes",
+        "statut_actif": "actif",
+        "statut_veille": "en veille",
+        "statut_erreur": "erreur",
+        "conversations": "Conversations",
+        "aucune_conversation": "Aucune conversation enregistrée.",
+        "jour_messages": "{n} message(s)",
+        "ancien_journal": "Ancien journal",
+        "minuteur_fenetre": "Minuteur — Jarvis",
+        "minuteur_pause_btn": "Pause",
+        "minuteur_reprendre": "Reprendre",
+        "minuteur_annuler": "Annuler",
+        "minuteur_confirmer": "Confirmer ?",
+        "minuteur_introuvable": "Ce minuteur n'existe plus.",
+        "note_fenetre": "Note — Jarvis",
+        "menu_affichage": "Affichage",
+        "menu_tableau": "Tableau de bord (afficher / masquer)",
     },
     "en": {
         "etat_repos": "Jarvis is ready",
@@ -513,6 +567,34 @@ TEXTES = {
         "vide": ("No conversation yet.\n"
                  "Hold F9 (or the mic button) to talk to Jarvis,\n"
                  "or type your message below."),
+        "minuteur_pause": "• {quoi}: paused ({duree})",
+        "systeme_cpu": "CPU",
+        "systeme_ram": "RAM",
+        "systeme_disque": "Disk",
+        "systeme_indispo": "—",
+        "agents": "Agents",
+        "agent_cerveau": "Brain",
+        "agent_voix": "Voice",
+        "agent_navigateur": "Browser",
+        "agent_minuteurs": "Timers",
+        "agent_recherches": "Research",
+        "agent_notes": "Notes",
+        "statut_actif": "active",
+        "statut_veille": "idle",
+        "statut_erreur": "error",
+        "conversations": "Conversations",
+        "aucune_conversation": "No saved conversation.",
+        "jour_messages": "{n} message(s)",
+        "ancien_journal": "Old log",
+        "minuteur_fenetre": "Timer — Jarvis",
+        "minuteur_pause_btn": "Pause",
+        "minuteur_reprendre": "Resume",
+        "minuteur_annuler": "Cancel",
+        "minuteur_confirmer": "Confirm?",
+        "minuteur_introuvable": "This timer no longer exists.",
+        "note_fenetre": "Note — Jarvis",
+        "menu_affichage": "View",
+        "menu_tableau": "Dashboard (show / hide)",
     },
 }
 # Nom affiché d'un minuteur sans étiquette (« kind » du fichier timers.json).
@@ -530,6 +612,19 @@ def _texte(langue: str, cle: str) -> str:
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
+
+def valeur_booleenne(valeur, defaut: bool) -> bool:
+    """true/false de la configuration (booléen TOML, ou texte « oui » /
+    « non » / « true » / « false ») ; `defaut` si illisible."""
+    if isinstance(valeur, bool):
+        return valeur
+    texte = str(valeur).strip().lower()
+    if texte in ("true", "oui", "yes", "1", "on", "vrai"):
+        return True
+    if texte in ("false", "non", "no", "0", "off", "faux"):
+        return False
+    return defaut
+
 
 def charger_config_app(racine: Path) -> dict:
     """Lit [app] avec config_jarvis (config.example.toml < config.toml <
@@ -562,6 +657,8 @@ def charger_config_app(racine: Path) -> dict:
             config["theme"] = nom_theme(app.get("theme", DEFAUTS["theme"]))
     except Exception:  # Un thème illisible ne doit jamais empêcher le lancement.
         config["theme"] = THEME_REPLI
+    for cle in ("animations", "tableau_de_bord"):
+        config[cle] = valeur_booleenne(config.get(cle), DEFAUTS[cle])
     try:
         config["largeur"] = max(640, min(1600, int(config["largeur"])))
     except (TypeError, ValueError):
@@ -606,6 +703,9 @@ def lire_etat(chemin: Path = FICHIER_ETAT) -> dict:
         # parlée du moment ; vide = rester sur la langue de la config.
         "langue": langue if langue in LANGUES else "",
         "present": True,
+        # Lot DB : état signalé par la boucle (cerveau, voix, navigateur).
+        "agents": ({str(k): str(v) for k, v in donnees["agents"].items()}
+                   if isinstance(donnees.get("agents"), dict) else {}),
     }
 
 
@@ -642,13 +742,22 @@ def charger_minuteurs(chemin: Path = FICHIER_MINUTEURS) -> list:
         # None si inconnue (ancien fichier).
         cree = _analyser_echeance(minuteur.get("created"))
         total = (due - cree).total_seconds() if cree is not None else None
+        try:
+            reste_pause = (float(minuteur.get("remaining_s") or 0)
+                           if minuteur.get("paused") else None)
+        except (TypeError, ValueError):
+            reste_pause = 0.0
         resultat.append({
+            "id": minuteur.get("id"),
             "due": due,
             "label": str(minuteur.get("label", "")),
             "kind": str(minuteur.get("kind", "timer")),
             "total_s": total if total and total > 0 else None,
+            # Lot U3 : en pause, temps restant figé (le minuteur ne sonne pas).
+            "pause_s": reste_pause,
         })
-    resultat.sort(key=lambda m: m["due"])
+    # En pause : après ceux qui tournent.
+    resultat.sort(key=lambda m: (m.get("pause_s") is not None, m["due"]))
     return resultat
 
 
@@ -656,6 +765,10 @@ def etat_jauge_minuteur(minuteur: dict, ref: datetime) -> tuple:
     """(fraction restante 0..1, clé de statut) d'un minuteur, pour sa jauge :
     « erreur » échu, « attente » dans la dernière minute, « actif » sinon.
     Sans durée totale connue, la jauge est pleine."""
+    if minuteur.get("pause_s") is not None:
+        total = minuteur.get("total_s")
+        reste = minuteur["pause_s"]
+        return (min(1.0, reste / total) if total else 1.0), "inactif"
     reste = (minuteur["due"] - ref).total_seconds()
     if reste < 0:
         return 0.0, "erreur"
@@ -725,6 +838,7 @@ def formater_notes(notes: list, langue: str = "fr") -> tuple:
 
 
 TAILLE_JAUGE = 22                  # jauge circulaire d'un minuteur (px)
+LARGEUR_MONITEUR = 130             # moniteur système de l'en-tête (3 jauges)
 
 
 def statut_recherche(tache: dict) -> str:
@@ -759,13 +873,210 @@ def formater_minuteurs(minuteurs: list, ref: datetime,
         reste = (minuteur["due"] - ref).total_seconds()
         quoi = minuteur["label"] or genres.get(minuteur["kind"],
                                                minuteur["kind"])
-        if reste < 0:
+        if minuteur.get("pause_s") is not None:
+            lignes.append(_texte(langue, "minuteur_pause").format(
+                quoi=quoi, duree=formater_compte_a_rebours(
+                    max(0.0, minuteur["pause_s"]), langue)))
+        elif reste < 0:
             lignes.append(_texte(langue, "minuteur_echu").format(quoi=quoi))
         else:
             lignes.append(_texte(langue, "minuteur_reste").format(
                 quoi=quoi,
                 duree=formater_compte_a_rebours(reste, langue)))
     return tuple(lignes) if lignes else (_texte(langue, "aucun_minuteur"),)
+
+
+# ---------------------------------------------------------------------------
+# Lot DB — moniteur système, agents, conversations (fonctions pures)
+# ---------------------------------------------------------------------------
+
+INTERVALLE_SYSTEME_MS = 5000       # moniteur système : une mesure / 5 s
+TAILLE_JAUGE_SYSTEME = 34          # jauges CPU / RAM / disque (px)
+LARGEUR_TABLEAU_BORD = 1100        # colonne Agents + Conversations dès cette largeur
+INTERVALLE_JOURS_S = 300.0         # liste des jours relue au plus toutes les 5 min
+MAX_JOURS_PANNEAU = 14
+
+
+def _psutil():
+    """Le module psutil, importé à la première mesure ; None s'il manque."""
+    try:
+        import psutil  # chargé seulement quand le moniteur mesure.
+        return psutil
+    except ImportError:
+        return None
+
+
+def disque_systeme() -> str:
+    """Racine du disque système (« C:\\ » sous Windows, « / » sinon)."""
+    if os.name == "nt":
+        return os.environ.get("SystemDrive", "C:") + "\\"
+    return "/"
+
+
+def mesurer_systeme(sonde=None, disque: str | None = None) -> dict | None:
+    """{"cpu", "ram", "disque"} en pourcentage (0 à 100, None si illisible),
+    ou None si psutil est absent. `sonde` remplace psutil (tests).
+    cpu_percent(interval=None) ne bloque jamais : il rend l'usage depuis
+    l'appel précédent (0 au tout premier)."""
+    sonde = sonde if sonde is not None else _psutil()
+    if sonde is None:
+        return None
+    disque = disque or disque_systeme()
+    mesures = {}
+    for cle, lire in (
+            ("cpu", lambda: sonde.cpu_percent(interval=None)),
+            ("ram", lambda: sonde.virtual_memory().percent),
+            ("disque", lambda: sonde.disk_usage(disque).percent)):
+        try:
+            mesures[cle] = max(0.0, min(100.0, float(lire())))
+        except Exception:
+            mesures[cle] = None
+    return mesures
+
+
+def statut_charge(pourcent) -> str:
+    """Couleur d'une jauge système : « ok » sous 70 %, « attente » sous
+    90 %, « erreur » au-delà, « inactif » si inconnue."""
+    if pourcent is None:
+        return "inactif"
+    if pourcent >= 90:
+        return "erreur"
+    return "attente" if pourcent >= 70 else "ok"
+
+
+AGENTS = ("cerveau", "voix", "navigateur", "minuteurs", "recherches", "notes")
+
+
+def etats_agents(etat: dict, minuteurs: list, recherches: list,
+                 notes_ok: bool = True) -> dict:
+    """État de chaque capacité : « actif », « veille » ou « erreur ».
+
+    Cerveau, voix et navigateur dépendent de la boucle vocale : boucle
+    arrêtée = erreur. Le champ optionnel « agents » de data/hud-state.json
+    (écrit par la boucle) signale une erreur du cerveau ou de la voix, et la
+    session Chrome pilotée ouverte (« navigateur » : « actif »).
+    """
+    boucle = etat.get("etat", "arrete")
+    signales = etat.get("agents")
+    signales = signales if isinstance(signales, dict) else {}
+
+    def depuis_boucle(nom, actif):
+        if boucle == "arrete" or signales.get(nom) == "erreur":
+            return "erreur"
+        return "actif" if actif else "veille"
+
+    erreur_texte = str(etat.get("erreur", "")).lower()
+    erreur_voix = boucle == "erreur" and any(
+        mot in erreur_texte for mot in ("micro", "transcription", "voix"))
+    resultat = {
+        "cerveau": depuis_boucle("cerveau", boucle == "reflexion"),
+        "voix": ("erreur" if erreur_voix else
+                 depuis_boucle("voix", boucle in ("ecoute", "reponse"))),
+        "navigateur": depuis_boucle(
+            "navigateur", signales.get("navigateur") == "actif"),
+        "minuteurs": ("actif" if any(m.get("pause_s") is None
+                                     for m in minuteurs) else "veille"),
+        "recherches": ("actif" if any(
+            t.get("statut") in ("en_attente", "en_cours")
+            for t in recherches) else "veille"),
+        "notes": "veille" if notes_ok else "erreur",
+    }
+    if boucle == "erreur" and not erreur_voix:
+        resultat["cerveau"] = "erreur"
+    return resultat
+
+
+def notes_lisibles(chemin: Path | None = None) -> bool:
+    """Faux si data/connaissances.json existe mais ne se lit pas."""
+    chemin = Path(chemin or FICHIER_CONNAISSANCES)
+    try:
+        if not chemin.exists():
+            return True
+        return isinstance(json.loads(chemin.read_text(encoding="utf-8")),
+                          dict)
+    except (OSError, ValueError):
+        return False
+
+
+def formater_jours(jours: list, langue: str = "fr") -> tuple:
+    """(libellé, nombre de messages) de chaque jour du panneau
+    Conversations, du plus récent au plus ancien."""
+    lignes = []
+    for jour in jours[:MAX_JOURS_PANNEAU]:
+        libelle = (_texte(langue, "ancien_journal")
+                   if jour["date"] == "Ancien journal"
+                   else formater_jour(jour["date"]))
+        lignes.append((libelle, _texte(langue, "jour_messages").format(
+            n=jour["messages"])))
+    return tuple(lignes)
+
+
+# ---------------------------------------------------------------------------
+# Lot U5 — animations (aucune au repos : rien n'est planifié sans animation)
+# ---------------------------------------------------------------------------
+
+PAS_TRANSITION_MS = 40             # une image / 40 ms, pendant l'animation seulement
+DUREE_ECLOSION_MS = 360            # orbe : petit « gonflement » au changement d'état
+AMPLITUDE_ECLOSION = 0.10          # halo 52 px x 1,10 = 57 px : tient dans 116 px
+DUREE_SURLIGNAGE_MS = 520          # nouvel élément d'un panneau : fondu de couleur
+
+
+class Animateur:
+    """Animations courtes, toutes sur UNE boucle after() qui ne tourne que
+    pendant qu'il y a une animation : au repos, aucun appel planifié
+    (~0 % CPU). `actif` False (réglage [app] animations = false) : chaque
+    animation saute directement à sa dernière image, sans rien planifier.
+
+    Une animation = durée + fonction(t), t allant de 0 à 1, compté en
+    images de PAS_TRANSITION_MS (une machine chargée allonge l'animation au
+    lieu de sauter des images). La même clé remplace l'animation en cours.
+    """
+
+    def __init__(self, fenetre, actif: bool = True):
+        self.fenetre, self.actif = fenetre, actif
+        self._animations: dict = {}
+        self._planifie = None
+
+    def en_cours(self, cle=None) -> bool:
+        if cle is None:
+            return bool(self._animations)
+        return cle in self._animations
+
+    def lancer(self, cle, duree_ms: int, etape) -> None:
+        if not self.actif or duree_ms <= 0:
+            self._appeler(etape, 1.0)
+            return
+        images = max(1, round(duree_ms / PAS_TRANSITION_MS))
+        self._animations[cle] = [0, images, etape]
+        if self._planifie is None:
+            self._planifie = self.fenetre.after(PAS_TRANSITION_MS, self._image)
+
+    @staticmethod
+    def _appeler(etape, t: float) -> bool:
+        try:
+            etape(t)
+            return True
+        except Exception:  # widget détruit entre-temps : animation abandonnée.
+            return False
+
+    def _image(self) -> None:
+        self._planifie = None
+        for cle, animation in list(self._animations.items()):
+            animation[0] += 1
+            t = min(1.0, animation[0] / animation[1])
+            if not self._appeler(animation[2], t) or t >= 1.0:
+                self._animations.pop(cle, None)
+        if self._animations:
+            try:
+                self._planifie = self.fenetre.after(PAS_TRANSITION_MS,
+                                                    self._image)
+            except Exception:
+                self._animations.clear()
+
+
+def courbe_eclosion(t: float) -> float:
+    """Échelle de l'orbe pendant l'éclosion : 1 + A au début, 1 à la fin."""
+    return 1.0 + AMPLITUDE_ECLOSION * (1.0 - max(0.0, min(1.0, t))) ** 2
 
 
 def ecrire_ptt(chemin: Path, actif: bool) -> None:
@@ -1188,6 +1499,25 @@ class Application:
         self._defilement_bas_voulu = False
         self._defilement_fraction: float | None = None
         self._dernier_bas = True
+        # Lot U5 : animations (une seule boucle after, seulement pendant une
+        # animation) ; [app] animations = false les coupe toutes.
+        self._animations = bool(config.get("animations", True))
+        self._animateur = Animateur(self.fenetre, self._animations)
+        self._ids_vus: dict = {}          # panneau -> identifiants déjà vus
+        # Lot U3 : minuteurs affichés (le clic d'une tuile retrouve le sien
+        # par sa position, même quand la tuile est mise à jour sur place).
+        self._minuteurs_affiches: list = []
+        self._fenetre_minuteur = None
+        self._annulation_armee = None
+        # Lot DB : moniteur système, agents, conversations.
+        self._mesures_systeme: dict | None = None
+        self._cle_systeme = None
+        self._cle_agents = None
+        self._cle_jours = None
+        self._jours_lus_a = float("-inf")
+        self._compte_du_jour = None
+        self._tableau_force: bool | None = None
+        self._tableau_visible = False
 
         # -- Menu ------------------------------------------------------
         self._barre_menu = tk.Menu(self.fenetre)
@@ -1201,6 +1531,12 @@ class Application:
                                        command=self.quitter)
         self._barre_menu.add_cascade(label=self.t("menu_fichier"),
                                      menu=self._menu_fichier)
+        # Lot DB : afficher / masquer la colonne Agents + Conversations.
+        self._menu_affichage = tk.Menu(self._barre_menu, tearoff=0)
+        self._menu_affichage.add_command(label=self.t("menu_tableau"),
+                                         command=self.basculer_tableau_de_bord)
+        self._barre_menu.add_cascade(label=self.t("menu_affichage"),
+                                     menu=self._menu_affichage)
         self.fenetre.config(menu=self._barre_menu)
 
         # -- Grille principale -----------------------------------------
@@ -1245,9 +1581,34 @@ class Application:
         self.texte_detail = ctk.CTkLabel(
             self.entete, text=self.t("detail_arrete"), font=_police(12),
             text_color=COULEUR_TEXTE_FAIBLE, anchor="w", justify="left",
-            wraplength=max(220, config["largeur"] - 340))
+            wraplength=max(200, config["largeur"] - 340 - LARGEUR_MONITEUR))
         self.texte_detail.grid(row=1, column=1, sticky="nw", padx=10,
                                pady=(2, 0))
+
+        # Lot DB : moniteur système (CPU, RAM, disque), jauges circulaires
+        # comme celles des minuteurs ; une mesure toutes les 5 s.
+        self.panneau_systeme = ctk.CTkFrame(self.entete,
+                                            fg_color="transparent")
+        self.panneau_systeme.grid(row=0, column=2, rowspan=2, padx=(6, 0),
+                                  pady=12)
+        self._jauges_systeme: dict = {}
+        for colonne, cle in enumerate(("cpu", "ram", "disque")):
+            cellule = ctk.CTkFrame(self.panneau_systeme,
+                                   fg_color="transparent")
+            cellule.grid(row=0, column=colonne, padx=4)
+            canevas = tk.Canvas(cellule, width=TAILLE_JAUGE_SYSTEME,
+                                height=TAILLE_JAUGE_SYSTEME,
+                                bg=COULEUR_PANNEAU, highlightthickness=0, bd=0)
+            canevas.pack()
+            valeur = ctk.CTkLabel(cellule, text=self.t("systeme_indispo"),
+                                  font=_police(10, True, titre=True),
+                                  text_color=COULEUR_TEXTE, height=14)
+            valeur.pack()
+            nom = ctk.CTkLabel(cellule, text=self._titre(f"systeme_{cle}"),
+                               font=_police(9, titre=True),
+                               text_color=COULEUR_TEXTE_FAIBLE, height=12)
+            nom.pack()
+            self._jauges_systeme[cle] = (canevas, valeur, nom)
 
         self.texte_horloge = ctk.CTkLabel(
             self.entete, text="--:--:--", font=_police(24, True, titre=True),
@@ -1260,13 +1621,13 @@ class Application:
                 self.entete, text="", font=_police(11, True, titre=True),
                 fg_color=COULEUR_FOND, corner_radius=10, height=22,
                 text_color=couleur_statut("inactif", COULEUR_TEXTE_FAIBLE))
-            self.pastille_etat.grid(row=0, column=2, sticky="s", padx=24,
+            self.pastille_etat.grid(row=0, column=3, sticky="s", padx=24,
                                     pady=(12, 0))
-            self.texte_horloge.grid(row=1, column=2, sticky="n", padx=24,
+            self.texte_horloge.grid(row=1, column=3, sticky="n", padx=24,
                                     pady=(2, 12))
             self._maj_pastille()
         else:
-            self.texte_horloge.grid(row=0, column=2, rowspan=2, padx=24,
+            self.texte_horloge.grid(row=0, column=3, rowspan=2, padx=24,
                                     pady=12)
 
         # -- Zone centrale : conversation + minuteurs -------------------
@@ -1363,6 +1724,66 @@ class Application:
         self._note_a_confirmer: int | None = None
         self._apres_confirmation_note = None
 
+        # Lot DB : colonne du tableau de bord (Agents, Conversations), à
+        # droite des panneaux existants, affichée quand la fenêtre est assez
+        # large (ou par le menu Affichage). Les panneaux U2/R1/KB ne bougent
+        # pas.
+        self.colonne_bord = ctk.CTkFrame(self.centre, fg_color="transparent",
+                                         corner_radius=0)
+        self.colonne_bord.grid_rowconfigure(1, weight=1)
+        self.colonne_bord.grid_columnconfigure(0, weight=1)
+        self.panneau_agents = ctk.CTkFrame(
+            self.colonne_bord, fg_color=COULEUR_PANNEAU, corner_radius=12,
+            **options_panneau())
+        self.panneau_agents.grid(row=0, column=0, sticky="new", padx=(0, 8),
+                                 pady=(8, 4))
+        self.panneau_agents.configure(width=220)
+        self.titre_agents = ctk.CTkLabel(
+            self.panneau_agents, text=self._titre("agents"),
+            font=_police(14, True, titre=True),
+            text_color=STYLE.get("titre_panneau") or COULEUR_TEXTE,
+            anchor="w")
+        self.titre_agents.pack(fill="x", padx=12, pady=(10, 2))
+        self.conteneur_agents = ctk.CTkFrame(self.panneau_agents,
+                                             fg_color="transparent")
+        self.conteneur_agents.pack(fill="x", padx=4, pady=(0, 10))
+        self._lignes_agents: dict = {}
+        for cle in AGENTS:
+            rangee = ctk.CTkFrame(self.conteneur_agents, **options_tuile())
+            rangee.pack(fill="x", padx=6, pady=2)
+            point = ctk.CTkLabel(rangee, text="●", font=_police(12), width=14,
+                                 height=22,
+                                 text_color=couleur_etat("inactif"))
+            point.pack(side="left", padx=(8, 4), pady=2)
+            nom = ctk.CTkLabel(rangee, text=self.t(f"agent_{cle}"),
+                               font=_police(12), text_color=COULEUR_TEXTE,
+                               anchor="w", height=22)
+            nom.pack(side="left", fill="x", expand=True, pady=2)
+            statut = ctk.CTkLabel(rangee, text="", font=_police(11),
+                                  text_color=COULEUR_TEXTE_FAIBLE, anchor="e",
+                                  height=22)
+            statut.pack(side="right", padx=(4, 8), pady=2)
+            self._lignes_agents[cle] = (point, nom, statut)
+
+        self.panneau_conversations = ctk.CTkFrame(
+            self.colonne_bord, fg_color=COULEUR_PANNEAU, corner_radius=12,
+            **options_panneau())
+        self.panneau_conversations.grid(row=1, column=0, sticky="nsew",
+                                        padx=(0, 8), pady=(4, 8))
+        self.panneau_conversations.configure(width=220)
+        self.titre_conversations = ctk.CTkLabel(
+            self.panneau_conversations, text=self._titre("conversations"),
+            font=_police(14, True, titre=True),
+            text_color=STYLE.get("titre_panneau") or COULEUR_TEXTE,
+            anchor="w")
+        self.titre_conversations.pack(fill="x", padx=12, pady=(10, 2))
+        self.conteneur_conversations = ctk.CTkScrollableFrame(
+            self.panneau_conversations, fg_color=COULEUR_PANNEAU,
+            corner_radius=0, width=190, height=120,
+            scrollbar_button_color=COULEUR_BARRE_DEFILEMENT)
+        self.conteneur_conversations.pack(fill="both", expand=True, padx=4,
+                                          pady=(0, 10))
+
         # -- Barre du bas : micro + interruption ------------------------
         self.barre_bas = ctk.CTkFrame(
             self.fenetre, fg_color=COULEUR_PANNEAU, corner_radius=0)
@@ -1417,8 +1838,10 @@ class Application:
         self.bouton_envoyer.grid(row=2, column=1, padx=(8, 16), pady=(4, 14))
 
         self._dessiner_orbe(1.0)
+        self._maj_tableau_de_bord()
         self.rafraichir()
         self._animer_orbe()
+        self._mesurer_systeme()
 
     # -- Langue --------------------------------------------------------
 
@@ -1438,6 +1861,9 @@ class Application:
             self._texte_minuteurs = ()  # force la reconstruction du panneau
             self._cle_recherches = ()
             self._cle_connaissances = ()
+            self._cle_agents = None
+            self._cle_jours = None
+            self._cle_systeme = None
 
         def message_vide():
             if self._message_vide is not None:
@@ -1458,6 +1884,14 @@ class Application:
                 text=self._titre("recherches")),
             lambda: self.titre_connaissances.configure(
                 text=self._titre("connaissances")),
+            lambda: self._barre_menu.entryconfigure(
+                1, label=self.t("menu_affichage")),
+            lambda: self._menu_affichage.entryconfigure(
+                0, label=self.t("menu_tableau")),
+            lambda: self.titre_agents.configure(text=self._titre("agents")),
+            lambda: self.titre_conversations.configure(
+                text=self._titre("conversations")),
+            self._langue_tableau_de_bord,
             lambda: self.bouton_interrompre.configure(
                 text=self.t("interrompre")),
             lambda: self.texte_astuce.configure(text=self.t("astuce")),
@@ -1569,6 +2003,10 @@ class Application:
         delai = PAS_REPOS_MS
         try:
             periode = ETATS[self.etat_affiche][2]
+            # Lot U5 : animations coupées = orbe immobile (il change quand
+            # même de couleur avec l'état).
+            if not getattr(self, "_animations", True):
+                periode = 0
             if periode > 0:
                 if self._globe is not None:
                     # Le globe tourne (un tour en ~7 s) pendant qu'il pulse.
@@ -1743,6 +2181,7 @@ class Application:
 
     def _rafraichir_minuteurs(self, minuteurs: list, ref: datetime) -> None:
         """Reconstruit le panneau minuteurs seulement si le texte change."""
+        self._minuteurs_affiches = list(minuteurs)
         lignes = formater_minuteurs(minuteurs, ref, self.langue)
         jauges = (tuple(etat_jauge_minuteur(m, ref) for m in minuteurs)
                   if STYLE else ())
@@ -1763,14 +2202,28 @@ class Application:
         self._tuiles_minuteurs = []
         for enfant in self.conteneur_minuteurs.winfo_children():
             enfant.destroy()
+        nouveaux = self._nouveaux("minuteurs",
+                                  [m.get("id") for m in minuteurs])
         if STYLE and minuteurs:
             self._lignes_minuteurs_stylees(lignes, jauges)
+            for index, (rangee, m) in enumerate(zip(
+                    self.conteneur_minuteurs.winfo_children(), minuteurs)):
+                if m.get("id") in nouveaux:
+                    self._surligner(rangee, "border_color", COULEUR_ACCENT,
+                                    STYLE["bordure_panneau"])
             return
-        for ligne in lignes:
-            ctk.CTkLabel(
+        for index, ligne in enumerate(lignes):
+            etiquette = ctk.CTkLabel(
                 self.conteneur_minuteurs, text=ligne, font=_police(12),
                 text_color=COULEUR_TEXTE, anchor="w",
-                justify="left").pack(fill="x", padx=8, pady=2)
+                justify="left", **({"cursor": "hand2"} if minuteurs else {}))
+            etiquette.pack(fill="x", padx=8, pady=2)
+            if minuteurs:
+                # Lot U3 : un clic ouvre pause / reprise / annulation.
+                self._cliquable(etiquette, index)
+                if minuteurs[index].get("id") in nouveaux:
+                    self._surligner(etiquette, "text_color", COULEUR_ACCENT,
+                                    COULEUR_TEXTE)
 
     def _lignes_minuteurs_stylees(self, lignes: tuple, jauges: tuple) -> None:
         """Thème stylé : une jauge circulaire par minuteur (temps restant,
@@ -1787,6 +2240,9 @@ class Application:
             etiquette.pack(side="left", fill="x", padx=(0, 8), pady=4)
             self._remplir_tuile_minuteur(etiquette, jauge, ligne, fraction,
                                          statut)
+            index = len(self._tuiles_minuteurs)
+            for widget in (rangee, jauge, etiquette):
+                self._cliquable(widget, index)  # lot U3
             self._tuiles_minuteurs.append((etiquette, jauge))
 
     def _remplir_tuile_minuteur(self, etiquette, jauge, ligne: str,
@@ -1819,7 +2275,28 @@ class Application:
                 text_color=COULEUR_TEXTE_FAIBLE, anchor="w",
                 justify="left").pack(fill="x", padx=8, pady=2)
             return
+        nouveaux = self._nouveaux("recherches",
+                                  [t.get("id") for t in recherches])
         for ligne, tache in zip(lignes, recherches):
+            if not STYLE:
+                # Lot U3 : point de statut coloré dans tous les thèmes.
+                rangee = ctk.CTkFrame(self.conteneur_recherches,
+                                      fg_color="transparent")
+                rangee.pack(fill="x", padx=2, pady=1)
+                ctk.CTkLabel(
+                    rangee, text="●", font=_police(12), width=14, height=22,
+                    text_color=couleur_etat(statut_recherche(tache))
+                ).pack(side="left", padx=(6, 0))
+                bouton = ctk.CTkButton(
+                    rangee, text=ligne.removeprefix("• "), font=_police(12),
+                    fg_color="transparent", hover_color=COULEUR_SURVOL_LISTE,
+                    text_color=COULEUR_TEXTE, anchor="w", height=26,
+                    command=lambda t=tache: self.ouvrir_recherche(t))
+                bouton.pack(fill="x", padx=(0, 4), pady=1)
+                if tache.get("id") in nouveaux:
+                    self._surligner(bouton, "text_color", COULEUR_ACCENT,
+                                    COULEUR_TEXTE)
+                continue
             if STYLE:
                 # Thème stylé : point de statut coloré, puis la ligne.
                 rangee = ctk.CTkFrame(self.conteneur_recherches,
@@ -1836,6 +2313,9 @@ class Application:
                     + " — " + recherche_mod.etiquette_statut(tache,
                                                              self.langue))
                 parent, placement = rangee, {"padx": (0, 6), "pady": 4}
+                if tache.get("id") in nouveaux:
+                    self._surligner(rangee, "border_color", COULEUR_ACCENT,
+                                    STYLE["bordure_panneau"])
             else:
                 parent, texte_ligne = self.conteneur_recherches, ligne
                 placement = {"padx": 4, "pady": 1}
@@ -1915,17 +2395,25 @@ class Application:
                 anchor="w", justify="left", wraplength=180
             ).pack(fill="x", padx=8, pady=2)
             return
+        nouveaux = self._nouveaux("notes", [n["id"] for n in notes])
         for (texte_note, date), note in zip(lignes, notes):
             ligne = ctk.CTkFrame(self.conteneur_connaissances,
                                  **options_tuile())
             ligne.pack(fill="x", padx=2, pady=2)
             ligne.grid_columnconfigure(0, weight=1)
             marge = (8, 2) if STYLE else (6, 2)  # hors du liseré de la tuile
-            ctk.CTkLabel(
+            etiquette_note = ctk.CTkLabel(
                 ligne, text=texte_note, font=_police(12),
                 text_color=COULEUR_TEXTE, anchor="w", justify="left",
-                wraplength=150).grid(row=0, column=0, sticky="w", padx=marge,
-                                     pady=(4, 0) if STYLE else 0)
+                wraplength=150, cursor="hand2")
+            etiquette_note.grid(row=0, column=0, sticky="w", padx=marge,
+                                pady=(4, 0) if STYLE else 0)
+            # Lot U3 : un clic sur le texte ouvre la note entière.
+            etiquette_note.bind(
+                "<Button-1>", lambda _e, n=note: self.ouvrir_note(n), add="+")
+            if note["id"] in nouveaux and self._note_a_confirmer is None:
+                self._surligner(etiquette_note, "text_color", COULEUR_ACCENT,
+                                COULEUR_TEXTE)
             ctk.CTkLabel(
                 ligne, text=date, font=_police(10),
                 text_color=STYLE.get("titre_panneau") or COULEUR_TEXTE_FAIBLE,
@@ -1976,6 +2464,272 @@ class Application:
         if self._note_a_confirmer is not None:
             self._note_a_confirmer = None
             self._rafraichir_connaissances(charger_notes())
+
+    def ouvrir_note(self, note: dict) -> None:
+        """Fenêtre de lecture d'une note (texte entier + date). Lecture
+        seule : la suppression reste la croix confirmée du panneau."""
+        fenetre = ctk.CTkToplevel(self.fenetre)
+        _fond_de_fenetre(fenetre)
+        fenetre.title(self.t("note_fenetre"))
+        fenetre.geometry("460x300")
+        zone = ctk.CTkScrollableFrame(
+            fenetre, fg_color=COULEUR_FOND, corner_radius=0,
+            scrollbar_button_color=COULEUR_BARRE_DEFILEMENT)
+        zone.pack(fill="both", expand=True, padx=10, pady=(10, 4))
+        ctk.CTkLabel(zone, text=connaissances_mod.formater_date(
+            str(note.get("cree_le", "")), self.langue), font=_police(11),
+            text_color=COULEUR_TEXTE_FAIBLE, anchor="w"
+        ).pack(fill="x", padx=6, pady=(4, 2))
+        ctk.CTkLabel(zone, text=str(note.get("texte", "")), font=_police(14),
+                     text_color=COULEUR_TEXTE, anchor="w", justify="left",
+                     wraplength=400).pack(fill="x", padx=6, pady=(0, 8))
+        ctk.CTkButton(
+            fenetre, text=self.t("fermer"), font=_police(13),
+            fg_color=COULEUR_ACCENT, hover_color=COULEUR_ACCENT_SURVOL,
+            text_color=COULEUR_TEXTE_SUR_ACCENT, corner_radius=18, height=34,
+            command=fenetre.destroy).pack(pady=(0, 10))
+        self._fenetre_note = fenetre
+
+    # -- Lot U3 : actions des tuiles de minuteur ------------------------
+
+    def _cliquable(self, widget, index: int) -> None:
+        """Clic sur une tuile de minuteur : fenêtre d'actions (pause,
+        reprise, annulation). L'index est relu au clic dans
+        _minuteurs_affiches (la tuile peut être mise à jour sur place)."""
+        try:
+            widget.bind("<Button-1>",
+                        lambda _e, i=index: self.ouvrir_actions_minuteur(i),
+                        add="+")
+        except Exception:
+            pass
+
+    def ouvrir_actions_minuteur(self, index: int) -> None:
+        """Petite fenêtre : « Pause » ou « Reprendre » (comptes à rebours
+        seulement), « Annuler » (second clic : « Confirmer ? »)."""
+        if not 0 <= index < len(self._minuteurs_affiches):
+            return
+        minuteur = self._minuteurs_affiches[index]
+        self._fermer_actions_minuteur()
+        fenetre = ctk.CTkToplevel(self.fenetre)
+        _fond_de_fenetre(fenetre)
+        fenetre.title(self.t("minuteur_fenetre"))
+        fenetre.geometry("360x160")
+        self._fenetre_minuteur = fenetre
+        self._annulation_armee = None
+        ligne = formater_minuteurs([minuteur], datetime.now(FUSEAU),
+                                   self.langue)[0].removeprefix("• ")
+        ctk.CTkLabel(fenetre, text=ligne, font=_police(14, True),
+                     text_color=COULEUR_TEXTE, wraplength=320,
+                     justify="left").pack(fill="x", padx=16, pady=(16, 10))
+        boutons = ctk.CTkFrame(fenetre, fg_color="transparent")
+        boutons.pack(pady=(0, 12))
+        ident = minuteur.get("id")
+        self._boutons_minuteur: dict = {}
+        if minuteur.get("kind") == "timer":
+            en_pause = minuteur.get("pause_s") is not None
+            action = "reprendre" if en_pause else "pause"
+            bouton = ctk.CTkButton(
+                boutons, text=self.t("minuteur_reprendre" if en_pause
+                                     else "minuteur_pause_btn"),
+                font=_police(13, True), fg_color=COULEUR_ACCENT,
+                hover_color=COULEUR_ACCENT_SURVOL,
+                text_color=COULEUR_TEXTE_SUR_ACCENT, corner_radius=16,
+                height=32, width=120,
+                command=lambda: self.action_minuteur(ident, action))
+            bouton.pack(side="left", padx=6)
+            self._boutons_minuteur[action] = bouton
+        annuler = ctk.CTkButton(
+            boutons, text=self.t("minuteur_annuler"), font=_police(13),
+            fg_color="transparent", hover_color=COULEUR_INTERROMPRE_SURVOL,
+            text_color=COULEUR_INTERROMPRE_TEXTE, border_width=1,
+            border_color=COULEUR_INTERROMPRE_BORDURE, corner_radius=16,
+            height=32, width=140,
+            command=lambda: self.demander_annulation_minuteur(ident))
+        annuler.pack(side="left", padx=6)
+        self._boutons_minuteur["annuler"] = annuler
+
+    def demander_annulation_minuteur(self, ident) -> bool:
+        """Premier clic : « Confirmer ? » ; second clic : annulation. Jamais
+        d'annulation sur un seul clic (comme la suppression d'une note)."""
+        if self._annulation_armee != ident:
+            self._annulation_armee = ident
+            bouton = getattr(self, "_boutons_minuteur", {}).get("annuler")
+            if bouton is not None:
+                bouton.configure(text=self.t("minuteur_confirmer"))
+            return False
+        self._annulation_armee = None
+        return self.action_minuteur(ident, "annuler")
+
+    def action_minuteur(self, ident, action: str) -> bool:
+        """Pause, reprise ou annulation du minuteur n° `ident` dans
+        data/timers.json (minuteur.py, sous verrou — même fichier que le
+        surveillant). Ferme la fenêtre d'actions et rafraîchit le panneau.
+        Retourne False si rien n'a changé (minuteur échu ou disparu)."""
+        import minuteur as minuteur_mod  # chargé au premier clic seulement.
+
+        fonction = {"pause": minuteur_mod.mettre_en_pause,
+                    "reprendre": minuteur_mod.reprendre,
+                    "annuler": minuteur_mod.annuler_numero}.get(action)
+        resultat = None
+        if fonction is not None:
+            try:
+                resultat = fonction(FICHIER_MINUTEURS, int(ident))
+            except (OSError, ValueError, TypeError) as erreur:
+                print(f"Avertissement application : minuteur : {erreur}",
+                      file=sys.stderr)
+        self._fermer_actions_minuteur()
+        self._texte_minuteurs = ()
+        self._rafraichir_minuteurs(charger_minuteurs(), datetime.now(FUSEAU))
+        return resultat is not None
+
+    def _fermer_actions_minuteur(self) -> None:
+        fenetre, self._fenetre_minuteur = self._fenetre_minuteur, None
+        if fenetre is not None:
+            try:
+                fenetre.destroy()
+            except Exception:
+                pass
+
+    # -- Lot U5 : surlignage des nouveaux éléments ----------------------
+
+    def _nouveaux(self, panneau: str, identifiants: list) -> set:
+        """Identifiants apparus depuis le dernier affichage du panneau (vide
+        au premier affichage : rien ne clignote au lancement)."""
+        vus = self._ids_vus.get(panneau)
+        actuels = {i for i in identifiants if i is not None}
+        self._ids_vus[panneau] = actuels
+        return set() if vus is None else actuels - vus
+
+    def _surligner(self, widget, option: str, depart: str,
+                   arrivee: str) -> None:
+        """Fondu de couleur d'un nouvel élément (de l'accent vers sa couleur
+        normale). Animations coupées : couleur finale tout de suite."""
+        self._animateur.lancer(
+            ("surligne", id(widget)), DUREE_SURLIGNAGE_MS,
+            lambda t: widget.configure(**{option: _fondre(depart, arrivee,
+                                                          1.0 - t)}))
+
+    # -- Lot DB : moniteur système, agents, conversations ---------------
+
+    def _mesurer_systeme(self) -> None:
+        """Une mesure (psutil, non bloquante) puis la suivante dans 5 s."""
+        try:
+            self._afficher_systeme(mesurer_systeme())
+        except Exception as erreur:
+            print(f"Avertissement application : moniteur : {erreur}",
+                  file=sys.stderr)
+        finally:
+            try:
+                existe = getattr(self.fenetre, "winfo_exists", None)
+                if existe is None or existe():
+                    self.fenetre.after(INTERVALLE_SYSTEME_MS,
+                                       self._mesurer_systeme)
+            except Exception:
+                pass
+
+    def _afficher_systeme(self, mesures: dict | None) -> None:
+        """Jauges CPU / RAM / disque ; redessinées seulement si un
+        pourcentage arrondi change. psutil absent : « — »."""
+        self._mesures_systeme = mesures
+        valeurs = mesures or {}
+        cle = tuple(None if valeurs.get(k) is None else round(valeurs[k])
+                    for k in ("cpu", "ram", "disque"))
+        if cle == self._cle_systeme:
+            return
+        self._cle_systeme = cle
+        piste = STYLE.get("jauge_fond") or _fondre(
+            COULEUR_TEXTE_FAIBLE, COULEUR_PANNEAU, 0.35)
+        for nom, pourcent in zip(("cpu", "ram", "disque"), cle):
+            canevas, valeur, _etiquette = self._jauges_systeme[nom]
+            canevas.delete("all")
+            dessiner_jauge(canevas, TAILLE_JAUGE_SYSTEME,
+                           (pourcent or 0) / 100.0,
+                           couleur_etat(statut_charge(pourcent)), piste, 4)
+            valeur.configure(text=(self.t("systeme_indispo") if pourcent
+                                   is None else f"{pourcent} %"))
+
+    def _rafraichir_agents(self, etats: dict) -> None:
+        """Point coloré + état de chaque capacité, mis à jour sur place."""
+        cle = tuple(etats.get(a, "veille") for a in AGENTS)
+        if cle == self._cle_agents:
+            return
+        self._cle_agents = cle
+        for agent, statut in zip(AGENTS, cle):
+            point, _nom, texte = self._lignes_agents[agent]
+            couleur = couleur_etat(STATUT_DES_AGENTS.get(statut, "inactif"))
+            point.configure(text_color=couleur)
+            texte.configure(text=self.t(f"statut_{statut}"),
+                            text_color=(couleur if statut != "veille"
+                                        else COULEUR_TEXTE_FAIBLE))
+
+    def _langue_tableau_de_bord(self) -> None:
+        for agent, (_point, nom, _texte) in self._lignes_agents.items():
+            nom.configure(text=self.t(f"agent_{agent}"))
+        for cle, (_canevas, _valeur, nom) in self._jauges_systeme.items():
+            nom.configure(text=self._titre(f"systeme_{cle}"))
+        self._jours_lus_a = float("-inf")
+
+    def _rafraichir_conversations(self, jours: list) -> None:
+        """Liste des jours (du plus récent), un clic relit le jour dans la
+        fenêtre Historique."""
+        lignes = formater_jours(jours, self.langue)
+        cle = (lignes, self.langue)
+        if cle == self._cle_jours:
+            return
+        self._cle_jours = cle
+        self._jours_affiches = list(jours[:MAX_JOURS_PANNEAU])
+        for enfant in self.conteneur_conversations.winfo_children():
+            enfant.destroy()
+        if not jours:
+            ctk.CTkLabel(
+                self.conteneur_conversations,
+                text=self.t("aucune_conversation"), font=_police(12),
+                text_color=COULEUR_TEXTE_FAIBLE, anchor="w", justify="left",
+                wraplength=170).pack(fill="x", padx=8, pady=2)
+            return
+        for (libelle, detail), jour in zip(lignes, jours):
+            ctk.CTkButton(
+                self.conteneur_conversations, text=f"{libelle}\n{detail}",
+                font=_police(12), fg_color="transparent",
+                hover_color=COULEUR_SURVOL_LISTE, text_color=COULEUR_TEXTE,
+                anchor="w", height=36,
+                command=lambda j=jour: self.ouvrir_jour(j)
+            ).pack(fill="x", padx=4, pady=2)
+
+    def ouvrir_jour(self, jour: dict) -> None:
+        """Ouvre l'Historique sur ce jour (lecture seule)."""
+        self.ouvrir_historique()
+        try:
+            self._choisir_jour_historique(jour)
+        except Exception as erreur:
+            print(f"Avertissement application : historique : {erreur}",
+                  file=sys.stderr)
+
+    def _maj_tableau_de_bord(self) -> None:
+        """Affiche la colonne Agents + Conversations si elle est voulue :
+        choix du menu Affichage, sinon [app] tableau_de_bord et fenêtre
+        d'au moins LARGEUR_TABLEAU_BORD px."""
+        if self._tableau_force is not None:
+            voulu = self._tableau_force
+        else:
+            try:
+                largeur = int(self.fenetre.winfo_width())
+            except Exception:
+                largeur = 0
+            voulu = (bool(self.config.get("tableau_de_bord", True))
+                     and largeur >= LARGEUR_TABLEAU_BORD)
+        if voulu == self._tableau_visible:
+            return
+        self._tableau_visible = voulu
+        if voulu:
+            self.colonne_bord.grid(row=0, column=2, rowspan=3, sticky="nsew")
+        else:
+            self.colonne_bord.grid_remove()
+
+    def basculer_tableau_de_bord(self) -> None:
+        """Menu Affichage : afficher / masquer la colonne (pour la session)."""
+        self._tableau_force = not self._tableau_visible
+        self._maj_tableau_de_bord()
 
     # -- Micro : push-to-talk et interruption --------------------------
 
@@ -2231,9 +2985,10 @@ class Application:
                 # Les bulles changent de hauteur : zone de défilement à
                 # recalculer, et on reste en bas si on y était.
                 self._planifier_defilement(bas)
-            # Le détail d'état passe à la ligne avant l'horloge.
+            # Le détail d'état passe à la ligne avant le moniteur.
             self.texte_detail.configure(wraplength=max(
-                220, self.fenetre.winfo_width() - 340))
+                200, self.fenetre.winfo_width() - 340 - LARGEUR_MONITEUR))
+            self._maj_tableau_de_bord()
         except Exception:
             pass
 
@@ -2277,6 +3032,13 @@ class Application:
                 self.texte_detail.configure(text=detail)
                 self._dessiner_orbe(1.0)
                 self._maj_pastille()
+                # Lot U5 : petite éclosion de l'orbe quand il s'arrête sur
+                # un état immobile (repos, erreur, arrêt) ; les états actifs
+                # pulsent déjà. Rien si les animations sont coupées.
+                if ETATS[etat_affiche][2] == 0:
+                    self._animateur.lancer(
+                        "orbe", DUREE_ECLOSION_MS,
+                        lambda t: self._dessiner_orbe(courbe_eclosion(t)))
 
             # Horloge (redessinée seulement quand la seconde change).
             horloge = maintenant.strftime("%H:%M:%S")
@@ -2288,6 +3050,17 @@ class Application:
             self._rafraichir_minuteurs(minuteurs, maintenant)
             self._rafraichir_recherches(recherches)
             self._rafraichir_connaissances(notes)
+            # Lot DB : agents (à chaque passage, mis à jour sur place) et
+            # liste des jours (relue quand le journal du jour grandit, au
+            # plus toutes les 5 min sinon).
+            self._rafraichir_agents(etats_agents(
+                etat, minuteurs, recherches, notes_lisibles()))
+            if (len(entrees) != self._compte_du_jour
+                    or time.monotonic() - self._jours_lus_a
+                    > INTERVALLE_JOURS_S):
+                self._compte_du_jour = len(entrees)
+                self._jours_lus_a = time.monotonic()
+                self._rafraichir_conversations(lister_jours(self.racine))
 
             # Conversation : ajouts, ou reconstruction si le journal a
             # raccourci (changement de jour : nouveau fichier).
