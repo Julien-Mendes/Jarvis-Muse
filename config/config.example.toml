@@ -8,10 +8,15 @@
 # minuteurs, vision, voix, lanceurs). "en" par défaut à moyen terme
 # (décision 21 nov. 2026) — les voix françaises Piper écoutées (Gilles, Tom)
 # sonnaient trop robotiques ; le français passe par la voix UPMC quand on y
-# revient. Bascule automatique selon la langue parlée : pas encore
-# implémentée, une langue à la fois. (Ancien emplacement [boucle] langue :
-# encore respecté s'il reste dans votre config.toml, mais à supprimer.)
+# revient. (Ancien emplacement [boucle] langue : encore respecté s'il reste
+# dans votre config.toml, mais à supprimer.)
 langue = "en"
+# Lot L1 : langue détectée à chaque tour (Whisper, puis le texte). Jarvis
+# répond, parle (Alan / UPMC) et affiche l'interface dans la langue du tour ;
+# si la détection est incertaine, la langue ci-dessus sert de repli. Les
+# annonces de minuteur suivent « langue », sauf pendant un tour dans l'autre
+# langue. false = une seule langue, celle ci-dessus (comportement d'avant L1).
+langue_auto = true
 # Langues acceptées pour la clé ci-dessus ("fr" et "en" seulement).
 langues_disponibles = ["fr", "en"]
 # Fuseau horaire (nom IANA) : horodatages, minuteurs, rappels à heure fixe.

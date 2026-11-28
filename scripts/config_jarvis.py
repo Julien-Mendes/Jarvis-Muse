@@ -190,6 +190,17 @@ def langue(donnees: dict | None = None) -> str:
                           LANGUES) or LANGUE_DEFAUT
 
 
+def langue_auto(donnees: dict | None = None) -> bool:
+    """Lot L1 : vrai si la langue de chaque tour est détectée ([general]
+    langue_auto, vrai par défaut). Faux = la langue de la config partout,
+    comme avant L1."""
+    donnees = charger_donnees() if donnees is None else donnees
+    valeur = section(donnees, "general").get("langue_auto", True)
+    if isinstance(valeur, str):
+        return valeur.strip().lower() not in ("false", "non", "0", "no", "")
+    return bool(valeur)
+
+
 def fuseau(donnees: dict | None = None) -> ZoneInfo:
     """Fuseau horaire de [general] fuseau_horaire (America/Toronto si absent
     ou invalide). Jamais codé en dur ailleurs."""

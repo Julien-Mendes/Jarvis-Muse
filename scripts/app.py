@@ -45,8 +45,9 @@ configuration (pas encore de panneau Réglages). Seul centre_de_commande a un
 « style » ; les trois autres gardent exactement la présentation U1/U2.
 
 Langue : les textes de la fenêtre principale suivent la langue de la
-boucle vocale — [boucle] langue de config.toml, ou le champ optionnel
-« langue » de data/hud-state.json quand la boucle l'écrit — en français
+boucle vocale — [general] langue de config.toml au démarrage, puis la
+langue de chaque tour (lot L1 : champ « langue » de data/hud-state.json,
+écrit par la boucle dès que la langue du tour est détectée) — en français
 ou en anglais. La fenêtre Historique reste en français pour l'instant.
 
 L'application n'est qu'une interface : la boucle vocale

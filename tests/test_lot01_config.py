@@ -20,7 +20,8 @@ EXEMPLE = chemins.RACINE / "config" / "config.example.toml"
 # échouer test_chaque_cle_de_l_exemple_est_reliee (bug F8 : réglages ignorés).
 CLES_LUES = {
     "general": {"langue": "config_jarvis", "langues_disponibles": "config_jarvis",
-                "fuseau_horaire": "config_jarvis"},
+                "fuseau_horaire": "config_jarvis",
+                "langue_auto": "config_jarvis"},
     "voix": {"moteur": "lire_voix", "voix_fr": "lire_voix",
              "voix_en": "lire_voix", "vitesse": "lire_voix"},
     "declenchement": {"touche_push_to_talk": "boucle_voix"},

@@ -17,8 +17,10 @@ survivent à un redémarrage. Ceux arrivés à échéance pendant que la machine
 était éteinte sont annoncés au démarrage de la surveillance.
 
 À l'échéance : carillon + annonce vocale via scripts/lire_voix.py (Piper,
-voix locale), dans la langue de config.toml ([boucle] langue, relue à chaque
-annonce ; --langue fr|en la remplace). Si la voix n'est pas disponible, le
+voix locale), dans la langue de config.toml ([general] langue, relue à chaque
+annonce ; --langue fr|en la remplace) — sauf pendant un tour de la boucle
+vocale dans l'autre langue (lot L1, champ « langue » de data/hud-state.json) :
+l'annonce suit alors la langue du tour. Si la voix n'est pas disponible, le
 message est affiché à l'écran et le carillon est joué quand même.
 
 Limites (patron du dépôt B, décisions du 21 nov. 2026) :
@@ -42,6 +44,7 @@ if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import config_jarvis
+import langue_tour as langue_tour_mod  # lot L1
 from verrou import VerrouInstance, verrou_fichier
 
 # Réglages lus une fois à l'import (K1) : fuseau et limites du minuteur.
@@ -92,6 +95,28 @@ def langue_courante(dossier_config: Path | None = None) -> str:
     n'exige pas de redémarrer `surveiller`.
     """
     return config_jarvis.langue(config_jarvis.charger_donnees(dossier_config))
+
+
+def chemin_etat_hud() -> Path:
+    """data/hud-state.json, écrit par la boucle vocale (langue du tour)."""
+    return Path(__file__).resolve().parent.parent / "data" / "hud-state.json"
+
+
+def langue_annonce(dossier_config: Path | None = None,
+                   chemin_etat: Path | None = None) -> str:
+    """Langue d'une annonce de minuteur (décision Q7 + lot L1).
+
+    Celle de la config, sauf si un tour est en cours dans l'autre langue
+    (champ « langue » de data/hud-state.json, frais) : l'annonce suit alors
+    la langue du tour. Avec [general] langue_auto = false : la config seule.
+    """
+    donnees = config_jarvis.charger_donnees(dossier_config)
+    langue_config = config_jarvis.langue(donnees)
+    if not config_jarvis.langue_auto(donnees):
+        return langue_config
+    return langue_tour_mod.langue_annonce_minuteur(
+        langue_config,
+        langue_tour_mod.langue_tour_en_cours(chemin_etat or chemin_etat_hud()))
 
 
 def chemin_donnees_defaut() -> Path:
@@ -285,7 +310,8 @@ def declencher_dus(chemin: Path, debut_surveillance=None,
                    langue: str | None = None) -> list:
     """Annonce et retire tous les minuteurs échus. Retourne les messages.
 
-    `langue` : « fr » ou « en » ; None = langue de la config (relue ici).
+    `langue` : « fr » ou « en » ; None = langue de la config (relue ici),
+    ou celle du tour en cours s'il est dans l'autre langue (L1).
 
     Si debut_surveillance est fourni (démarrage de `surveiller`), les
     minuteurs échus avant (début - 1 minute) sont annoncés comme manqués
@@ -306,7 +332,7 @@ def declencher_dus(chemin: Path, debut_surveillance=None,
             return []
         etat["timers"] = [m for m in minuteurs if m not in dus]
         sauvegarder(chemin, etat)
-    langue = langue or langue_courante()
+    langue = langue or langue_annonce()
 
     messages = []
     for minuteur in dus:

@@ -148,6 +148,7 @@ import navigateur as navigateur_mod  # noqa: E402
 import recherche as recherche_mod  # noqa: E402
 # Lot KB : base de connaissances personnelles (notes, mots-clés).
 import connaissances as connaissances_mod  # noqa: E402
+import langue_tour as langue_tour_mod  # noqa: E402  (lot L1)
 SCRIPT_HUD = RACINE / "scripts" / "hud.py"
 SCRIPT_APP = RACINE / "scripts" / "app.py"
 
@@ -169,6 +170,9 @@ DEFAUTS = {
     # Langue : lue dans [general] langue (défaut « en » à moyen terme,
     # décision 21 nov. 2026) ; voir config_jarvis.langue().
     "langue": "en",
+    # Lot L1 : langue détectée à chaque tour ([general] langue_auto) ;
+    # « langue » ci-dessus devient la langue de repli.
+    "langue_auto": True,
     "touche": "F9",
     "duree_max_enregistrement": 30.0,
     "duree_min_enregistrement": 0.3,
@@ -220,6 +224,8 @@ def charger_config(racine: Path) -> dict:
     config_jarvis.reprendre(config, donnees,
                             ("boucle", "yeux", "navigateur"))
     config["langue"] = config_jarvis.langue(donnees)
+    # L1 : langue détectée à chaque tour ([general] langue_auto).
+    config["langue_auto"] = config_jarvis.langue_auto(donnees)
     # V1 : [voix] vitesse, transmise à la voix (résidente ou lire_voix.py).
     config["vitesse_voix"] = config_jarvis.nombre_borne(
         config_jarvis.section(donnees, "voix").get("vitesse", 1.0),
@@ -246,13 +252,18 @@ FICHIER_PTT_HUD = RACINE / "data" / "hud-ptt.json"
 
 
 def ecrire_etat_hud(etat: str, transcription: str = "",
-                    erreur: str = "") -> None:
+                    erreur: str = "", langue: str = "") -> None:
     """Écrit l'état courant pour le HUD (scripts/hud.py) — jamais bloquant.
 
     data/hud-state.json, écrit atomiquement (fichier temporaire +
     os.replace). Toute erreur est silencieuse : le HUD fonctionne sans
     la boucle (état « repos » par défaut). États : repos, ecoute,
     reflexion, reponse, erreur.
+
+    `langue` (lot L1) : langue du tour en cours (« fr » / « en »), écrite
+    dans le champ « langue » : l'application y aligne ses textes et le
+    surveillant des minuteurs ses annonces. Vide = champ omis (l'application
+    garde sa langue du moment).
     """
     try:
         FICHIER_ETAT_HUD.parent.mkdir(parents=True, exist_ok=True)
@@ -262,6 +273,8 @@ def ecrire_etat_hud(etat: str, transcription: str = "",
             "erreur": erreur,
             "horodatage": datetime.now(FUSEAU).isoformat(timespec="seconds"),
         }
+        if langue in langue_tour_mod.LANGUES:
+            donnees["langue"] = langue
         temporaire = FICHIER_ETAT_HUD.with_suffix(".json.tmp")
         temporaire.write_text(
             json.dumps(donnees, ensure_ascii=False), encoding="utf-8")
@@ -440,6 +453,7 @@ def journaliser_tour(bilan: dict) -> None:
             "modele": bilan.get("modele", ""),
             "stt": bilan.get("stt", ""),
             "voix": bilan.get("voix", ""),
+            "langue": bilan.get("langue", ""),  # L1 : langue du tour.
             "enregistrement_s": bilan.get("enregistrement_s"),
             "transcription_s": bilan.get("transcription_s"),
             "premier_token_s": bilan.get("premier_token_s"),
@@ -674,25 +688,61 @@ class Enregistreur:
 # ---------------------------------------------------------------------------
 
 class TranscripteurGroq:
-    """Whisper infonuagique via Groq (whisper-large-v3-turbo)."""
+    """Whisper infonuagique via Groq (whisper-large-v3-turbo).
 
-    def __init__(self, cle_api: str, modele: str, langue: str = "en"):
+    Lot L1 : la langue n'est plus forcée — Whisper la détecte (réponse
+    « verbose_json », champ `language`). `derniere_langue` garde la langue
+    détectée du dernier appel (« fr », « en » ou None). Si Whisper détecte
+    une autre langue que fr / en (souffle, accent, mot isolé), l'audio est
+    retranscrit en forçant `langue` (celle de la config) : pas de phrase en
+    néerlandais envoyée au cerveau.
+    """
+
+    def __init__(self, cle_api: str, modele: str, langue: str = "en",
+                 auto: bool = True):
         from groq import Groq
 
         self.client = Groq(api_key=cle_api)
         self.modele = modele
         self.langue = langue
+        self.auto = auto
+        self.derniere_langue: str | None = None
+        self.derniere_probabilite: float | None = None
 
-    def transcrire(self, octets_wav: bytes) -> str:
-        reponse = self.client.audio.transcriptions.create(
+    def _appel(self, octets_wav: bytes, langue: str | None):
+        options = {"language": langue} if langue else {}
+        return self.client.audio.transcriptions.create(
             model=self.modele,
             file=("enregistrement.wav", octets_wav, "audio/wav"),
-            language=self.langue,
-            response_format="text",
+            response_format="verbose_json" if langue is None else "text",
+            **options,
         )
+
+    @staticmethod
+    def _texte(reponse) -> str:
         if isinstance(reponse, str):
             return reponse.strip()
         return str(getattr(reponse, "text", "")).strip()
+
+    def transcrire(self, octets_wav: bytes) -> str:
+        self.derniere_langue = None
+        self.derniere_probabilite = None
+        if not self.auto:
+            texte = self._texte(self._appel(octets_wav, self.langue))
+            self.derniere_langue = self.langue
+            return texte
+        reponse = self._appel(octets_wav, None)
+        detectee = langue_tour_mod.normaliser_whisper(
+            getattr(reponse, "language", None)
+            if not isinstance(reponse, dict) else reponse.get("language"))
+        if detectee is None:
+            # Ni fr ni en (ou langue absente de la réponse) : on retranscrit
+            # dans la langue de la config, la détection reviendra au texte.
+            return self._texte(self._appel(octets_wav, self.langue))
+        self.derniere_langue = detectee
+        if isinstance(reponse, dict):
+            return str(reponse.get("text", "")).strip()
+        return self._texte(reponse)
 
 
 class TranscripteurLocal:
@@ -700,26 +750,67 @@ class TranscripteurLocal:
 
     Option future (décision bloc 5, encore ouverte) : aucun audio ne quitte
     alors la machine. Le modèle (~150 Mo) est téléchargé au premier usage.
+
+    Lot L1 : langue détectée par faster-whisper (`info.language`,
+    `info.language_probability`) ; hors fr / en, retranscription forcée sur
+    la langue de la config (comme pour Groq).
     """
 
-    def __init__(self, modele: str = "base", langue: str = "en"):
+    def __init__(self, modele: str = "base", langue: str = "en",
+                 auto: bool = True):
         from faster_whisper import WhisperModel
 
         self.modele = WhisperModel(modele, device="cpu", compute_type="int8")
         self.langue = langue
+        self.auto = auto
+        self.derniere_langue: str | None = None
+        self.derniere_probabilite: float | None = None
 
     def transcrire(self, octets_wav: bytes) -> str:
         import tempfile
 
+        self.derniere_langue = None
+        self.derniere_probabilite = None
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             chemin_tmp = Path(tmp.name)
         try:
             chemin_tmp.write_bytes(octets_wav)
-            segments, _ = self.modele.transcribe(
-                str(chemin_tmp), language=self.langue)
+            segments, info = self.modele.transcribe(
+                str(chemin_tmp), language=None if self.auto else self.langue)
+            detectee = langue_tour_mod.normaliser_whisper(
+                getattr(info, "language", None))
+            if self.auto and detectee is None:
+                segments, info = self.modele.transcribe(
+                    str(chemin_tmp), language=self.langue)
+            elif self.auto:
+                self.derniere_langue = detectee
+                self.derniere_probabilite = getattr(
+                    info, "language_probability", None)
+            else:
+                self.derniere_langue = self.langue
             return "".join(s.text for s in segments).strip()
         finally:
             chemin_tmp.unlink(missing_ok=True)
+
+
+def config_du_tour(config: dict, transcription: str,
+                   transcripteur=None) -> dict:
+    """Lot L1 : copie de la config dont « langue » est la langue du tour.
+
+    Langue détectée par Whisper (attributs `derniere_langue` /
+    `derniere_probabilite` du transcripteur, absents pour un tour tapé),
+    sinon détectée sur le texte, sinon celle de la config. Tout le tour
+    (traiter_tour, prompt, outils, voix, textes) lit ensuite cette copie :
+    la config d'origine n'est jamais modifiée.
+    """
+    tour = dict(config)
+    tour["langue_config"] = str(config["langue"])
+    tour["langue"] = langue_tour_mod.langue_du_tour(
+        transcription, str(config["langue"]),
+        getattr(transcripteur, "derniere_langue", None),
+        getattr(transcripteur, "derniere_probabilite", None),
+        auto=bool(config.get("langue_auto", True)))
+    return tour
 
 
 def transcription_utile(texte: str) -> bool:
@@ -735,7 +826,9 @@ def creer_transcripteur(config: dict):
     """Fabrique le transcripteur choisi dans la configuration."""
     if config["fournisseur_stt"] == "local":
         try:
-            return TranscripteurLocal(config["modele_stt_local"], str(config["langue"]))
+            return TranscripteurLocal(config["modele_stt_local"],
+                                      str(config["langue"]),
+                                      bool(config.get("langue_auto", True)))
         except ImportError:
             print("Erreur : faster-whisper n'est pas installé.", file=sys.stderr)
             print("Installez-le avec :", file=sys.stderr)
@@ -752,7 +845,9 @@ def creer_transcripteur(config: dict):
         print("  GROQ_API_KEY=gsk_...", file=sys.stderr)
         raise SystemExit(3)
     try:
-        return TranscripteurGroq(cle, config["modele_stt_groq"], str(config["langue"]))
+        return TranscripteurGroq(cle, config["modele_stt_groq"],
+                                 str(config["langue"]),
+                                 bool(config.get("langue_auto", True)))
     except ImportError:
         print("Erreur : le module groq n'est pas installé.", file=sys.stderr)
         print("Installez-le avec :", file=sys.stderr)
@@ -3229,7 +3324,9 @@ def main() -> int:
     charger_env(RACINE)
     config = charger_config(RACINE)
     if args.langue:
+        # --langue force la langue : pas de détection par tour (L1).
         config["langue"] = args.langue
+        config["langue_auto"] = False
 
     if args.verifier:
         return verifier(config)
@@ -3258,8 +3355,11 @@ def main() -> int:
         session_texte = SessionNavigateur()
         bilan = _nouveau_bilan(config, "texte")
         debut_tour = time.monotonic()
+        config_tour = config_du_tour(config, args.texte)  # L1.
+        bilan["langue"] = str(config_tour["langue"])
+        bilan["voix"] = "alan" if bilan["langue"] == "en" else "upmc"
         try:
-            reponse = traiter_tour(args.texte, config, cerveau, [],
+            reponse = traiter_tour(args.texte, config_tour, cerveau, [],
                                    args.donnees, {}, session_texte,
                                    mesures=bilan, repli=Repli(config),
                                    source_note="texte")
@@ -3528,8 +3628,25 @@ def main() -> int:
                     continue
                 print(f"Julien : {transcription}")
                 ecrire_etat_hud("reflexion", transcription=transcription)
+            # Lot L1 : langue du tour (Whisper, puis le texte, puis la
+            # config) ; tout le tour suit cette copie de la config.
+            config_tour = config_du_tour(
+                config, transcription,
+                transcripteur if texte_demande is None else None)
+            langue_tour = str(config_tour["langue"])
+            bilan["langue"] = langue_tour
+            bilan["voix"] = "alan" if langue_tour == "en" else "upmc"
+            ecrire_etat_hud("reflexion", transcription=transcription,
+                            langue=langue_tour)
+            # Voix de l'autre langue : préchauffée pendant que le cerveau
+            # réfléchit (une seule voix en mémoire, budget 200 Mo).
+            if not voix_residente.est_chargee(langue_tour):
+                threading.Thread(target=voix_residente.prechauffer,
+                                 args=(langue_tour,
+                                       float(config["vitesse_voix"])),
+                                 daemon=True).start()
             etat_tour: dict = {}
-            reponse = traiter_tour(transcription, config, cerveau,
+            reponse = traiter_tour(transcription, config_tour, cerveau,
                                    historique, args.donnees,
                                    confirmation_en_attente,
                                    session_navigateur, mesures=bilan,
@@ -3543,7 +3660,7 @@ def main() -> int:
             # d'écran…) est lu à Julien mais jamais redonné au modèle.
             historique.append({"role": "assistant", "content": (
                 etat_tour.get("historique")
-                or (msg(str(config["langue"]), "historique_externe")
+                or (msg(langue_tour, "historique_externe")
                     if etat_tour.get("externe") else reponse))})
             historique = historique[-20:]
             # Premier jeton ≈ réponse complète (client non diffusant) ;
@@ -3557,8 +3674,9 @@ def main() -> int:
 
             evenement_interruption.clear()  # avant la phase (voir P1).
             changer_phase("parle")
-            ecrire_etat_hud("reponse", transcription=transcription)
-            dire(reponse, str(config["langue"]), evenement_interruption,
+            ecrire_etat_hud("reponse", transcription=transcription,
+                            langue=langue_tour)
+            dire(reponse, langue_tour, evenement_interruption,
                  vitesse=float(config["vitesse_voix"]), voix=voix_residente,
                  au_premier_son=_premier_son)
             bilan["total_s"] = round(time.monotonic() - t_liberation, 3)
@@ -3568,7 +3686,8 @@ def main() -> int:
             bilan["cout_estime_gbp"] = round(
                 bilan["cout_estime_usd"] * TAUX_USD_GBP, 6)
             journaliser_tour(bilan)
-            ecrire_etat_hud("repos", transcription=transcription)
+            ecrire_etat_hud("repos", transcription=transcription,
+                            langue=langue_tour)
             changer_phase("repos")
     except KeyboardInterrupt:
         print("\nAu revoir, Julien.")

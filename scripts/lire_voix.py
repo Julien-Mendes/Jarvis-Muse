@@ -17,6 +17,7 @@ Voix par défaut (décisions du 21 nov. 2026) :
 """
 
 import argparse
+import gc
 import queue
 import re
 import sys
@@ -198,14 +199,27 @@ class VoixResidente:
     Les modèles sont chargés une fois (par voix) puis réutilisés ; `lire`
     synthétise la phrase suivante pendant que la précédente est jouée.
     Utilisable depuis plusieurs fils : chargement et synthèse sont sous verrou.
+
+    Lot L1 (langue du tour) : la voix suit la langue de chaque tour. Mesuré
+    le 27 nov. 2026 (working set du processus, Python 3.14, piper-tts 1.8) :
+    ~17 Mo à vide, ~183 Mo avec Alan, ~316 à 333 Mo avec Alan + UPMC — au-delà
+    du budget de 200 Mo. D'où `max_voix` = 1 par défaut : une voix chargée à
+    la demande, cache de la dernière utilisée ; changer de langue décharge
+    l'autre (rechargement ~1 à 4 s, préchauffé par la boucle dès que la
+    langue du tour est connue).
     """
 
+    MAX_VOIX_DEFAUT = 1
+
     def __init__(self, dossier_modeles: Path | None = None,
-                 donnees: dict | None = None):
+                 donnees: dict | None = None,
+                 max_voix: int | None = None):
         racine = Path(__file__).resolve().parent.parent
         self.dossier_modeles = Path(dossier_modeles or (racine / "models"))
         self.donnees = (config_jarvis.charger_donnees()
                         if donnees is None else donnees)
+        self.max_voix = max(1, int(max_voix or self.MAX_VOIX_DEFAUT))
+        # Ordre = du moins au plus récemment utilisé (dict garde l'ordre).
         self._voix: dict = {}
         self._verrou_chargement = threading.Lock()
         self._verrou_synthese = threading.Lock()
@@ -218,17 +232,41 @@ class VoixResidente:
                                "([voix] moteur)")
         nom = voix or nom_voix_configure(self.donnees, langue)
         with self._verrou_chargement:
-            if nom not in self._voix:
-                chemin_modele, chemin_config = trouver_modele(
-                    self.dossier_modeles, nom)
-                if chemin_modele is None:
-                    raise FileNotFoundError(
-                        f"voix « {nom} » introuvable dans {self.dossier_modeles}")
-                from piper import PiperVoice
-
-                self._voix[nom] = PiperVoice.load(str(chemin_modele),
-                                                  str(chemin_config))
+            if nom in self._voix:
+                self._voix[nom] = self._voix.pop(nom)  # la plus récente.
+                return self._voix[nom]
+            chemin_modele, chemin_config = trouver_modele(
+                self.dossier_modeles, nom)
+            if chemin_modele is None:
+                raise FileNotFoundError(
+                    f"voix « {nom} » introuvable dans {self.dossier_modeles}")
+            # Budget mémoire (L1) : décharger d'abord la voix la moins
+            # récente, pour ne jamais avoir les deux modèles en même temps.
+            while len(self._voix) >= self.max_voix:
+                del self._voix[next(iter(self._voix))]
+            gc.collect()
+            self._voix[nom] = self._charger_modele(chemin_modele,
+                                                   chemin_config)
             return self._voix[nom]
+
+    @staticmethod
+    def _charger_modele(chemin_modele, chemin_config):
+        from piper import PiperVoice
+
+        return PiperVoice.load(str(chemin_modele), str(chemin_config))
+
+    def est_chargee(self, langue: str) -> bool:
+        """Vrai si la voix de cette langue est déjà en mémoire."""
+        try:
+            nom = nom_voix_configure(self.donnees, langue)
+        except KeyError:
+            return False
+        return nom in self.voix_chargees()
+
+    def voix_chargees(self) -> list:
+        """Noms des voix en mémoire, de la moins à la plus récente."""
+        with self._verrou_chargement:
+            return list(self._voix)
 
     def synthetiser(self, texte: str, langue: str, vitesse: float = 1.0):
         """(fréquence, audio brut) d'un texte, avec la voix résidente."""
