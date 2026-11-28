@@ -75,6 +75,17 @@ annoncées au prochain moment calme et au lancement ; « où en est ma
 recherche ? » / « lis-moi le résultat » lisent la réponse et ses sources
 directement (jamais redonnées au modèle). Pas de notification app fermée.
 
+Lot LT — Tâches longues (scripts/taches_longues.py) : « c'est une longue
+tâche : … », « prends le temps qu'il faut pour … », « travaille là-dessus
+pendant 2 heures : … » (et l'anglais) lancent, sans modèle, une tâche dans
+data/taches_longues.json ; l'outil proposer_tache_longue permet au cerveau de
+la proposer (lancée sur un « oui » oral ≤ 30 s). Un travailleur en
+arrière-plan (son cerveau, jamais la boucle) fait un plan, exécute et vérifie
+chaque étape, réessaie sur erreur transitoire, respecte le budget et reprend
+après un redémarrage. « Où en est ma tâche ? » / « qu'est-ce qui reste ? »
+sont lus dans le fichier ; la fin est annoncée dans la langue du tour qui a
+lancé la tâche, avec « Veux-tu que je te lise le résultat ? ».
+
 Lot KB — Base de connaissances (scripts/connaissances.py) : « note que… »,
 « retiens que… », « ajoute à mes notes… » (voix ou champ texte) enregistrent
 une note dans data/connaissances.json et Jarvis répond « Noté. ». L'outil
@@ -147,6 +158,8 @@ SCRIPT_NAVIGATEUR = RACINE / "scripts" / "navigateur.py"
 import navigateur as navigateur_mod  # noqa: E402
 # Lot R1 : recherche différée (file de tâches, travailleur, textes).
 import recherche as recherche_mod  # noqa: E402
+# Lot LT : tâches longues (plan, travailleur, reprise, textes).
+import taches_longues as taches_mod  # noqa: E402
 # Lot KB : base de connaissances personnelles (notes, mots-clés).
 import connaissances as connaissances_mod  # noqa: E402
 import langue_tour as langue_tour_mod  # noqa: E402  (lot L1)
@@ -236,6 +249,8 @@ def charger_config(racine: Path) -> dict:
     config["langue_auto"] = config_jarvis.langue_auto(donnees)
     # Lot B : [cerveau] effort (bas / moyen / auto).
     config["effort"] = config_jarvis.effort_cerveau(donnees)
+    # Lot LT : [taches_longues] (budget de temps, étapes, débit, effort).
+    config["taches_longues"] = taches_mod.reglages(donnees)
     # V1 : [voix] vitesse, transmise à la voix (résidente ou lire_voix.py).
     config["vitesse_voix"] = config_jarvis.nombre_borne(
         config_jarvis.section(donnees, "voix").get("vitesse", 1.0),
@@ -543,24 +558,40 @@ class ModePrive:
         self.actif = False
         self.recherches = None   # recherche_mod.Memoire pendant le mode.
         self.travailleur = None  # travailleur de recherche de la session.
+        # Lot LT : tâches longues de la session (taches_mod.Memoire) et leur
+        # travailleur ; `suspendus` = travailleurs NORMAUX de tâches longues,
+        # suspendus pendant le mode (rien n'est écrit dans
+        # data/taches_longues.json), relancés à la sortie.
+        self.taches = None
+        self.travailleur_taches = None
+        self.suspendus: list = []
         self._historique_normal: list | None = None
 
     def entrer(self, historique: list, confirmation: dict | None = None,
-               fabrique_travailleur=None) -> list:
+               fabrique_travailleur=None,
+               fabrique_travailleur_taches=None) -> list:
         """Entre en mode privé ; retourne le contexte de départ (vide).
 
         Le contexte d'avant est mis de côté (en mémoire) ; une confirmation
         en attente (« garder ce résumé ? »…) est annulée.
         `fabrique_travailleur(memoire)` crée le travailleur de recherche de
-        la session privée (démarré ici), qui n'écrit que dans la mémoire.
+        la session privée (démarré ici), qui n'écrit que dans la mémoire ;
+        `fabrique_travailleur_taches(memoire)` de même pour les tâches
+        longues (lot LT).
         """
         if self.actif:
             return historique
         self._historique_normal = list(historique or [])
         self.recherches = recherche_mod.Memoire()
+        self.taches = taches_mod.Memoire()
         if confirmation is not None:
             confirmation.clear()
         self.actif = True
+        for normal in self.suspendus:
+            try:
+                normal.suspendre()
+            except Exception:
+                pass
         if fabrique_travailleur is not None:
             try:
                 self.travailleur = fabrique_travailleur(self.recherches)
@@ -569,20 +600,37 @@ class ModePrive:
                 print(f"Recherche privée indisponible : {erreur}",
                       file=sys.stderr)
                 self.travailleur = None
+        if fabrique_travailleur_taches is not None:
+            try:
+                self.travailleur_taches = fabrique_travailleur_taches(
+                    self.taches)
+                self.travailleur_taches.demarrer()
+            except Exception as erreur:
+                print(f"Tâches longues privées indisponibles : {erreur}",
+                      file=sys.stderr)
+                self.travailleur_taches = None
         return []
 
     def sortir(self, confirmation: dict | None = None) -> list:
-        """Sort du mode privé : contexte privé, recherches et travailleur
-        jetés ; retourne le contexte d'avant le mode, intact."""
+        """Sort du mode privé : contexte privé, recherches, tâches longues et
+        travailleurs jetés ; retourne le contexte d'avant le mode, intact."""
         if not self.actif:
             return []
-        travailleur, self.travailleur = self.travailleur, None
-        if travailleur is not None:
+        for nom in ("travailleur", "travailleur_taches"):
+            travailleur = getattr(self, nom)
+            setattr(self, nom, None)
+            if travailleur is not None:
+                try:
+                    travailleur.arreter()
+                except Exception:
+                    pass
+        for normal in self.suspendus:
             try:
-                travailleur.arreter()
+                normal.relancer()
             except Exception:
                 pass
         self.recherches = None
+        self.taches = None
         if confirmation is not None:
             confirmation.clear()
         restaure = self._historique_normal or []
@@ -693,7 +741,8 @@ def lire_demande_prive() -> dict | None:
 def basculer_mode_prive(demande: dict, historique: list,
                         confirmation: dict | None = None,
                         fabrique_travailleur=None,
-                        langue_defaut: str = "en") -> dict:
+                        langue_defaut: str = "en",
+                        fabrique_travailleur_taches=None) -> dict:
     """Applique « entrer » / « sortir » ; sans appel au modèle.
 
     Retour : {"texte": annonce, "langue": langue de l'annonce,
@@ -706,7 +755,8 @@ def basculer_mode_prive(demande: dict, historique: list,
         if PRIVE.actif:
             return {"texte": msg(langue, "prive_deja"), "langue": langue,
                     "historique": historique, "change": False}
-        nouveau = PRIVE.entrer(historique, confirmation, fabrique_travailleur)
+        nouveau = PRIVE.entrer(historique, confirmation, fabrique_travailleur,
+                               fabrique_travailleur_taches)
         return {"texte": msg(langue, "prive_active"), "langue": langue,
                 "historique": nouveau, "change": True}
     if not PRIVE.actif:
@@ -785,6 +835,9 @@ def prompt_systeme(langue: str = "en") -> str:
             "lancer_recherche. Une question simple que tu sais : réponds "
             "directement, sans outil.\n"
             "- « où en est ma recherche ? » : lire_recherche.\n"
+            "- une demande de plus de 3 étapes de recherche, d'analyse ou de "
+            "rédaction (planifier, comparer en détail, rédiger un document) : "
+            "proposer_tache_longue (Jarvis demande d'abord à Julien).\n"
             "- « qu'est-ce que je t'ai dit sur X ? », un budget, un code : "
             "chercher_connaissance. « note que X » est déjà gardé par le code : "
             "n'appelle aucun outil pour ça.\n"
@@ -839,6 +892,9 @@ def prompt_systeme(langue: str = "en") -> str:
         "question that needs several sources: lancer_recherche. A simple "
         "question you know: answer directly, no tool.\n"
         "- \"how is my research going?\": lire_recherche.\n"
+        "- a request with more than 3 steps of research, analysis or writing "
+        "(planning, a detailed comparison, drafting a document): "
+        "proposer_tache_longue (Jarvis asks Julien first).\n"
         "- \"what did I tell you about X?\", a budget, a code: "
         "chercher_connaissance. \"note that X\" is already saved by the "
         "code: call no tool for it.\n"
@@ -1450,6 +1506,33 @@ OUTIL_LIRE_RECHERCHE_GROQ, OUTIL_LIRE_RECHERCHE_ANTHROPIC = _paire_outil(
     "lire_recherche", OUTIL_LIRE_RECHERCHE_DESCRIPTION,
     OUTIL_LIRE_RECHERCHE_PARAMETRES)
 
+# Outil lot LT — proposer une tâche longue. Il ne lance RIEN : Jarvis dit
+# « C'est une grosse tâche, je peux y travailler en arrière-plan, ça te va ? »
+# et seul un « oui » oral court (≤ 30 s, vérifié en code) la lance. C'est une
+# écriture : refusé après une lecture externe (échec fermé, hold_writes).
+OUTIL_TACHE_LONGUE_DESCRIPTION = (
+    "Proposer à Julien de faire sa demande comme une tâche longue en "
+    "arrière-plan (plan, étapes vérifiées, résultat annoncé à la fin). "
+    "Utilise-le quand la demande dépasse 3 étapes de recherche, d'analyse ou "
+    "de rédaction, ou prendrait plusieurs minutes (comparer en détail, "
+    "planifier un projet, rédiger un document). Pas pour des actions sur "
+    "l'ordinateur (minuteur, site, vidéo) : celles-là, fais-les dans ce tour."
+)
+OUTIL_TACHE_LONGUE_PARAMETRES = {
+    "type": "object",
+    "properties": {
+        "objectif": {
+            "type": "string",
+            "description": "L'objectif complet et autonome de la tâche, avec "
+                           "les mots de Julien.",
+        },
+    },
+    "required": ["objectif"],
+}
+OUTIL_TACHE_LONGUE_GROQ, OUTIL_TACHE_LONGUE_ANTHROPIC = _paire_outil(
+    "proposer_tache_longue", OUTIL_TACHE_LONGUE_DESCRIPTION,
+    OUTIL_TACHE_LONGUE_PARAMETRES)
+
 # Outil lot KB — lecture seule des notes de Julien (mots-clés). Le résultat
 # est enveloppé dans <untrusted_data source="notes"> : une note est une
 # donnée, jamais une consigne. Si une note rendue vient d'une recherche web,
@@ -1590,6 +1673,20 @@ TEXTES_OUTILS_EN = {
                      "empty: the most recent one).",
         },
     },
+    "proposer_tache_longue": {
+        "description": (
+            "Offer Julien to handle his request as a long task in the "
+            "background (plan, checked steps, result announced at the end). "
+            "Use it when the request needs more than 3 steps of research, "
+            "analysis or writing, or would take several minutes (detailed "
+            "comparison, planning a project, drafting a document). Not for "
+            "actions on the computer (timer, site, video): do those in this "
+            "turn."),
+        "parametres": {
+            "objectif": "The full, self-contained goal of the task, in "
+                        "Julien's words.",
+        },
+    },
     "chercher_connaissance": {
         "description": (
             "Search Julien's personal notes (what he asked you to note or "
@@ -1633,7 +1730,8 @@ def outils_pour(fournisseur: str, langue: str) -> list:
               "naviguer_page": OUTIL_PAGE_GROQ,
               "lancer_recherche": OUTIL_RECHERCHE_GROQ,
               "lire_recherche": OUTIL_LIRE_RECHERCHE_GROQ,
-              "chercher_connaissance": OUTIL_CONNAISSANCE_GROQ}
+              "chercher_connaissance": OUTIL_CONNAISSANCE_GROQ,
+              "proposer_tache_longue": OUTIL_TACHE_LONGUE_GROQ}
              if forme == "groq" else
              {"regler_minuteur": OUTIL_MINUTEUR_ANTHROPIC,
               "decrire_ecran": OUTIL_ECRAN_ANTHROPIC,
@@ -1644,7 +1742,8 @@ def outils_pour(fournisseur: str, langue: str) -> list:
               "naviguer_page": OUTIL_PAGE_ANTHROPIC,
               "lancer_recherche": OUTIL_RECHERCHE_ANTHROPIC,
               "lire_recherche": OUTIL_LIRE_RECHERCHE_ANTHROPIC,
-              "chercher_connaissance": OUTIL_CONNAISSANCE_ANTHROPIC})
+              "chercher_connaissance": OUTIL_CONNAISSANCE_ANTHROPIC,
+              "proposer_tache_longue": OUTIL_TACHE_LONGUE_ANTHROPIC})
     if langue == "fr":
         return list(bases.values())
     return [_outil_en(base, nom, forme) for nom, base in bases.items()]
@@ -3756,6 +3855,217 @@ def fabriquer_synthetiseur(config: dict):
 
 
 # ---------------------------------------------------------------------------
+# Tâches longues (lot LT) — voir scripts/taches_longues.py
+# ---------------------------------------------------------------------------
+
+def reglages_taches(config: dict) -> dict:
+    """[taches_longues] (lu par charger_config) ; défauts sinon (tests)."""
+    reglage = config.get("taches_longues")
+    return reglage if isinstance(reglage, dict) else taches_mod.reglages({})
+
+
+def chemin_taches(config: dict):
+    """data/taches_longues.json, ou config["fichier_taches"] (tests) ; en
+    mode privé, la mémoire de la session (taches_mod.Memoire)."""
+    if PRIVE.actif and PRIVE.taches is not None:
+        return PRIVE.taches
+    return Path(config.get("fichier_taches")
+                or taches_mod.chemin_donnees_defaut())
+
+
+def executer_lancement_tache(demande: dict, historique: list, config: dict,
+                             travailleur=None) -> dict:
+    """Enregistre une tâche longue et retourne la confirmation à dire.
+
+    `demande` : {"objectif": str ("" = « là-dessus » : la phrase précédente
+    de Julien), "duree_min": minutes dites par Julien, ou None (réglage
+    [taches_longues] duree_max_minutes)}. Sans travailleur (mode --texte), la
+    tâche est gardée et faite au prochain lancement — on le dit.
+    Retour : {"texte", "historique"}.
+    """
+    langue = str(config["langue"])
+    if PRIVE.actif:
+        travailleur = PRIVE.travailleur_taches
+    objectif = (demande.get("objectif") or "").strip()
+    if not objectif:
+        objectif = _derniere_phrase_utilisateur(historique)
+    if not objectif:
+        return {"texte": taches_mod.texte(langue, "manque_objectif")}
+    reglage = reglages_taches(config)
+    minutes = demande.get("duree_min") or reglage["duree_max_minutes"]
+    try:
+        ajout = taches_mod.ajouter(chemin_taches(config), objectif, langue,
+                                   float(minutes) * 60.0,
+                                   reglage["max_etapes"])
+    except taches_mod.FilePleine:
+        return {"texte": taches_mod.texte(langue, "file_pleine",
+                                          n=taches_mod.MAX_EN_FILE)}
+    except (ValueError, OSError) as erreur:
+        print(f"Tâches longues : {erreur}", file=sys.stderr)
+        return {"texte": taches_mod.texte(langue, "manque_objectif")}
+    phrase = taches_mod.formater_lancement(ajout, langue,
+                                           differee=travailleur is None)
+    if travailleur is not None:
+        travailleur.signaler()
+    return {"texte": phrase,
+            "historique": taches_mod.texte(
+                langue, "historique_lancee",
+                t=taches_mod.titre_court(ajout["tache"]["objectif"]))}
+
+
+def executer_suivi_tache(demande: dict, config: dict) -> dict | None:
+    """« Où en est ma tâche ? », « qu'est-ce qui reste ? », « lis-moi le
+    résultat de ma tâche » — d'après le fichier seulement : le travailleur
+    n'est ni réveillé ni interrogé.
+
+    Retour : {"texte", "externe", "historique", "proposer_lecture": id} ou
+    None (question non explicite et aucune tâche en cours : ce n'était pas
+    pour les tâches longues).
+    """
+    langue = str(config["langue"])
+    taches = taches_mod.lister(chemin_taches(config))
+    if not demande.get("explicite") and not any(
+            t["etat"] == "en_cours" for t in taches):
+        return None
+    tache = taches_mod.choisir(taches)
+    if tache is None:
+        return {"texte": taches_mod.texte(langue, "aucune"), "externe": False}
+    if demande.get("type") == "lecture" and tache["etat"] != "en_cours":
+        return executer_lecture_tache(tache["id"], config)
+    if demande.get("type") == "reste":
+        phrase = taches_mod.formater_reste(tache, langue)
+    else:
+        phrase = taches_mod.formater_etat(tache, langue)
+    resultat = {"texte": phrase, "externe": False}
+    if tache["etat"] != "en_cours" and tache.get("resultat"):
+        if tache["etat"] == "bloquee":
+            phrase += taches_mod.texte(langue, "proposer_lecture_partielle")
+            resultat["texte"] = phrase
+        resultat["proposer_lecture"] = tache["id"]
+        taches_mod.marquer_annoncees(chemin_taches(config), [tache["id"]])
+    return resultat
+
+
+def executer_lecture_tache(ident, config: dict) -> dict:
+    """Lit le résultat d'une tâche longue DIRECTEMENT (jamais redonné au
+    modèle : il peut dériver de pages externes, §1) ; l'historique n'en
+    garde qu'un repère. Retour : {"texte", "externe", "historique"}."""
+    langue = str(config["langue"])
+    chemin = chemin_taches(config)
+    try:
+        tache = taches_mod.obtenir(chemin, int(ident))
+    except (OSError, TypeError, ValueError):
+        tache = None
+    if tache is None:
+        return {"texte": taches_mod.texte(langue, "aucune"), "externe": False}
+    if tache["etat"] == "en_cours":
+        return {"texte": taches_mod.formater_etat(tache, langue),
+                "externe": False}
+    taches_mod.marquer_lue(chemin, tache["id"])
+    return {"texte": taches_mod.formater_lecture(tache, langue),
+            "externe": bool(tache.get("externe")),
+            "historique": taches_mod.texte(
+                langue, "historique_lecture",
+                t=taches_mod.titre_court(tache.get("titre", "")))}
+
+
+def executer_annulation_tache(config: dict) -> str:
+    """« Annule ma tâche longue » : la tâche en cours est arrêtée (le
+    travailleur le voit à son prochain point de reprise)."""
+    langue = str(config["langue"])
+    chemin = chemin_taches(config)
+    en_cours = [t for t in taches_mod.lister(chemin)
+                if t["etat"] == "en_cours"]
+    if not en_cours:
+        return taches_mod.texte(langue, "rien_a_annuler")
+    tache = taches_mod.annuler(chemin, min(t["id"] for t in en_cours))
+    if tache is None:
+        return taches_mod.texte(langue, "rien_a_annuler")
+    return taches_mod.texte(langue, "annulee", t=taches_mod.titre_court(
+        tache.get("titre", "")), fait=taches_mod.bilan_fait(tache, langue))
+
+
+def armer_lecture_tache(confirmation: dict | None, ident) -> None:
+    """« Veux-tu que je te lise le résultat ? » : un oui oral court au tour
+    suivant (dans DELAI_CONFIRMATION_S) le lit."""
+    if confirmation is None or ident is None:
+        return
+    confirmation["outil"] = "lire_tache_longue"
+    confirmation["arguments"] = {"tache_id": ident}
+    confirmation["arme_a"] = time.monotonic()
+
+
+def armer_proposition_tache(confirmation: dict | None, objectif: str,
+                            langue: str) -> None:
+    """« C'est une grosse tâche… ça te va ? » : un oui oral court dans les
+    30 s lance la tâche ; toute autre phrase annule la proposition."""
+    if confirmation is None or not str(objectif or "").strip():
+        return
+    confirmation["outil"] = "tache_longue"
+    confirmation["arguments"] = {"objectif": str(objectif).strip(),
+                                 "langue": langue}
+    confirmation["arme_a"] = time.monotonic()
+
+
+def annonces_taches(config: dict) -> list:
+    """Tâches finies à annoncer, chacune dans la langue du tour qui l'a
+    lancée : [(phrase, langue, id à proposer en lecture ou None)]. Marquées
+    annoncées ici."""
+    chemin = chemin_taches(config)
+    annonces = []
+    a_dire = taches_mod.a_annoncer(chemin)
+    for tache in a_dire:
+        langue = tache.get("langue") or str(config["langue"])
+        annonces.append((taches_mod.formater_annonce(tache, langue), langue,
+                         tache["id"] if tache.get("resultat") else None))
+    taches_mod.marquer_annoncees(chemin, [t["id"] for t in a_dire])
+    return annonces
+
+
+def fabriquer_appel_tache(config: dict):
+    """Fonction appeler(messages, delai, max_tokens) -> str du travailleur
+    de tâches longues : SON cerveau (créé au premier besoin, dans son fil),
+    distinct de celui de la boucle, effort [taches_longues] effort (moyen par
+    défaut). Aucun outil n'est déclaré à ces appels. Clé ou module absent :
+    blocage dur (« cle »), jamais de nouvel essai inutile."""
+    etat = {"cerveau": None}
+    effort = EFFORTS_API.get(reglages_taches(config)["effort"], "medium")
+
+    def appeler(messages: list, delai: float, max_tokens: int) -> str:
+        if etat["cerveau"] is None:
+            try:
+                cerveau = creer_cerveau(config)
+            except SystemExit:
+                raise taches_mod.BlocageDur("cle")
+            appliquer_effort(cerveau, effort)
+            etat["cerveau"] = cerveau
+        delai = max(1.0, min(float(delai), 120.0))
+        return etat["cerveau"].completer(messages, delai=delai,
+                                         max_tokens=int(max_tokens))
+
+    return appeler
+
+
+def creer_travailleur_taches(chemin, config: dict, sur_fin=None,
+                             fabrique_session=None):
+    """Travailleur de tâches longues : son cerveau, son Chrome réduit pour
+    les étapes web (jamais la session de la boucle), les notes en lecture
+    seule, le limiteur de débit partagé ([taches_longues]
+    jetons_par_minute)."""
+    reglage = reglages_taches(config)
+    taches_mod.LIMITEUR.jetons_par_minute = int(reglage["jetons_par_minute"])
+
+    def chercher_notes(requete: str) -> dict:
+        return executer_chercher_connaissance(requete, dict(
+            config, langue=config.get("langue", "en")))
+
+    return taches_mod.Travailleur(
+        chemin, fabriquer_appel_tache(config), classer_erreur_cerveau,
+        fabrique_session=fabrique_session, chercher_notes=chercher_notes,
+        sur_fin=sur_fin)
+
+
+# ---------------------------------------------------------------------------
 # Traitement d'un tour : transcription -> réponse
 # ---------------------------------------------------------------------------
 
@@ -3790,7 +4100,8 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
                 donnees: Path | None, confirmation: dict | None = None,
                 session_navigateur=None, mesures: dict | None = None,
                 etat_tour: dict | None = None, repli: Repli | None = None,
-                travailleur_recherche=None, source_note: str = "voix") -> str:
+                travailleur_recherche=None, source_note: str = "voix",
+                travailleur_taches=None) -> str:
     """Traite une phrase entendue et retourne la réponse à lire à voix haute.
 
     `confirmation` est un dict partagé entre les tours ({"outil": ...,
@@ -3818,6 +4129,10 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
 
     `source_note` (lot KB) : « voix » ou « texte » — d'où vient une note
     dictée (« note que… ») ; enregistré avec la note.
+
+    `travailleur_taches` (lot LT) : travailleur de tâches longues à réveiller
+    quand une tâche est lancée ; None en mode --texte (faite au prochain
+    lancement).
     """
     if mesures is not None:
         mesures.setdefault("llm_s", 0.0)
@@ -3873,6 +4188,32 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
                 return executer_garder_recherche(
                     en_attente.get("arguments", {}).get("recherche_id"),
                     config)
+            if en_attente["outil"] == "lire_tache_longue":
+                # Lot LT : « Veux-tu que je te lise le résultat ? » — oui.
+                _outil("lire_tache_longue")
+                lecture = executer_lecture_tache(
+                    en_attente.get("arguments", {}).get("tache_id"), config)
+                if lecture.get("externe"):
+                    etat_tour["externe"] = True
+                if lecture.get("historique"):
+                    etat_tour["historique"] = lecture["historique"]
+                return lecture["texte"]
+            if en_attente["outil"] == "tache_longue":
+                # Lot LT : « C'est une grosse tâche… ça te va ? » — oui.
+                _outil("lancer_tache_longue")
+                lancement = executer_lancement_tache(
+                    {"objectif": en_attente.get("arguments", {}).get(
+                        "objectif", ""), "duree_min": None},
+                    historique, config, travailleur_taches)
+                if lancement.get("historique"):
+                    etat_tour["historique"] = lancement["historique"]
+                return lancement["texte"]
+        if (not perimee and en_attente["outil"] in ("lire_tache_longue",
+                                                    "tache_longue")
+                and est_refus_court(transcription)):
+            return taches_mod.texte(
+                langue, "lecture_refusee" if en_attente["outil"]
+                == "lire_tache_longue" else "proposition_refusee")
         if en_attente["outil"] == "clarification" and not perimee:
             # Lot B : réponse à la question de clarification du tour
             # précédent ; sinon la phrase est une nouvelle demande.
@@ -3918,6 +4259,33 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
         if ajout.get("historique"):
             etat_tour["historique"] = ajout["historique"]
         return ajout["texte"]
+
+    # 0 ter. Lot LT — tâches longues : lancement, annulation, suivi (sans
+    #    modèle). Avant le test « plusieurs étapes » : l'objectif d'une
+    #    tâche longue en a souvent plusieurs (« compare X puis rédige Y »).
+    demande_tache = taches_mod.detecter_lancement(transcription)
+    if demande_tache is not None:
+        _outil("lancer_tache_longue")
+        lancement = executer_lancement_tache(demande_tache, historique,
+                                             config, travailleur_taches)
+        if lancement.get("historique"):
+            etat_tour["historique"] = lancement["historique"]
+        return lancement["texte"]
+    if taches_mod.detecter_annulation(transcription):
+        _outil("annuler_tache_longue")
+        return executer_annulation_tache(config)
+    demande_suivi_tache = taches_mod.detecter_suivi(transcription)
+    if demande_suivi_tache is not None:
+        suivi_tache = executer_suivi_tache(demande_suivi_tache, config)
+        if suivi_tache is not None:
+            _outil("suivre_tache_longue")
+            if suivi_tache.get("externe"):
+                etat_tour["externe"] = True
+            if suivi_tache.get("historique"):
+                etat_tour["historique"] = suivi_tache["historique"]
+            armer_lecture_tache(confirmation,
+                                suivi_tache.get("proposer_lecture"))
+            return suivi_tache["texte"]
 
     # 1. Chemins rapides : minuteur, écran, navigateur (sans appel LLM).
     #    Lot B : une demande à plusieurs étapes va directement au
@@ -4151,6 +4519,19 @@ def traiter_tour(transcription: str, config: dict, cerveau, historique: list,
                     armer_proposition_note(confirmation,
                                            suivi.get("proposer_note"))
                     _direct(suivi)
+                    if not enchainer:
+                        return _fin()
+                    resultat_outil = msg(langue, "outil_fait_direct")
+                elif appel["nom"] == "proposer_tache_longue":
+                    # Lot LT — réponse directe : la question est posée ; RIEN
+                    # n'est lancé avant le « oui » oral de Julien (≤ 30 s).
+                    objectif = (str(args.get("objectif", "") or "").strip()
+                                or transcription)
+                    armer_proposition_tache(confirmation, objectif, langue)
+                    _direct({"texte": taches_mod.texte(langue, "proposition"),
+                             "historique": taches_mod.texte(
+                                 langue, "historique_proposee",
+                                 t=taches_mod.titre_court(objectif))})
                     if not enchainer:
                         return _fin()
                     resultat_outil = msg(langue, "outil_fait_direct")
@@ -4410,6 +4791,9 @@ def main() -> int:
         # un « regarde mon écran » échouerait faute de clé API avant même
         # d'avoir pu demander la confirmation.
         if (connaissances_mod.detecter_ajout(args.texte) is None
+                and taches_mod.detecter_lancement(args.texte) is None
+                and not taches_mod.detecter_annulation(args.texte)
+                and taches_mod.detecter_suivi(args.texte) is None
                 and detecter_minuteur(args.texte) is None
                 and detecter_ecran(args.texte) is None
                 and detecter_fermeture(args.texte) is None
@@ -4516,6 +4900,37 @@ def main() -> int:
             memoire, lambda: SessionNavigateur(fond=True),
             fabriquer_synthetiseur(config),
             sur_fin=lambda _tache: file_annonces.put(True))
+
+    # Lot LT — tâches longues. Les tâches « en cours » interrompues par une
+    # fermeture reprennent là où elles s'étaient arrêtées (annoncé au premier
+    # moment calme), puis le travailleur démarre : son cerveau, son Chrome
+    # réduit pour les étapes web, jamais la boucle. Suspendu en mode privé.
+    fichier_taches = chemin_taches(config)
+    annonces_reprise: list = []
+    try:
+        reprise_taches = taches_mod.reprendre_au_demarrage(fichier_taches)
+        for tache in reprise_taches["reprises"]:
+            langue_tache = tache.get("langue") or str(config["langue"])
+            annonces_reprise.append(
+                (taches_mod.formater_reprise(tache, langue_tache),
+                 langue_tache, None))
+        if reprise_taches["echecs"]:
+            print(f"Tâches longues interrompues trop souvent : "
+                  f"{len(reprise_taches['echecs'])} arrêtée(s).")
+    except OSError as erreur:
+        print(f"Tâches longues : {erreur}", file=sys.stderr)
+    travailleur_taches = creer_travailleur_taches(
+        fichier_taches, config, sur_fin=lambda _t: file_annonces.put(True),
+        fabrique_session=lambda: SessionNavigateur(fond=True))
+    travailleur_taches.demarrer()
+    PRIVE.suspendus = [travailleur_taches]
+
+    def _travailleur_taches_prive(memoire):
+        """Lot PR / LT : travailleur des tâches longues de la session
+        privée — n'écrit que dans `memoire`, jetée à la sortie du mode."""
+        return creer_travailleur_taches(
+            memoire, config, sur_fin=lambda _t: file_annonces.put(True),
+            fabrique_session=lambda: SessionNavigateur(fond=True))
 
     def _annoncer_bascule(bascule: dict) -> None:
         """Lot PR : dit « Mode privé activé / désactivé » (sans modèle)."""
@@ -4640,7 +5055,8 @@ def main() -> int:
             if demande_prive is not None:
                 bascule = basculer_mode_prive(
                     demande_prive, historique, confirmation_en_attente,
-                    _travailleur_prive, str(config["langue"]))
+                    _travailleur_prive, str(config["langue"]),
+                    _travailleur_taches_prive)
                 historique = bascule["historique"]
                 _annoncer_bascule(bascule)
                 continue
@@ -4673,6 +5089,26 @@ def main() -> int:
                     armer_proposition_note(confirmation_en_attente,
                                            a_proposer)
                     ecrire_etat_hud("repos")
+                    changer_phase("repos")
+                # Lot LT : reprises au démarrage, puis tâches longues finies,
+                # chacune dans la langue du tour qui l'a lancée ; « Veux-tu
+                # que je te lise le résultat ? » armé une fois la phrase dite.
+                try:
+                    a_dire_taches = annonces_reprise + annonces_taches(config)
+                except OSError as erreur:
+                    print(f"Tâches longues : {erreur}", file=sys.stderr)
+                    a_dire_taches = list(annonces_reprise)
+                annonces_reprise = []
+                for texte_tache, langue_tache, a_lire in a_dire_taches:
+                    journaliser_echange(None, texte_tache)
+                    evenement_interruption.clear()
+                    changer_phase("parle")
+                    ecrire_etat_hud("reponse", langue=langue_tache)
+                    dire(texte_tache, langue_tache, evenement_interruption,
+                         vitesse=float(config["vitesse_voix"]),
+                         voix=voix_residente)
+                    armer_lecture_tache(confirmation_en_attente, a_lire)
+                    ecrire_etat_hud("repos", langue=langue_tache)
                     changer_phase("repos")
                 continue
             # Bilan du tour (journal des tours, étape 7.1) ; t_liberation
@@ -4753,7 +5189,8 @@ def main() -> int:
             if demande_bascule is not None:
                 bascule = basculer_mode_prive(
                     demande_bascule, historique, confirmation_en_attente,
-                    _travailleur_prive, str(config["langue"]))
+                    _travailleur_prive, str(config["langue"]),
+                    _travailleur_taches_prive)
                 historique = bascule["historique"]
                 _annoncer_bascule(bascule)
                 continue
@@ -4784,7 +5221,14 @@ def main() -> int:
                                        PRIVE.travailleur if PRIVE.actif
                                        else travailleur_recherche),
                                    source_note=("texte" if texte_demande
-                                                is not None else "voix"))
+                                                is not None else "voix"),
+                                   travailleur_taches=(
+                                       PRIVE.travailleur_taches
+                                       if PRIVE.actif else travailleur_taches))
+            # Lot LT : la boucle dépense le même débit Groq que les tâches
+            # longues ; le travailleur lui laisse la place.
+            taches_mod.LIMITEUR.noter(int(bilan.get("entree_tokens", 0))
+                                      + int(bilan.get("sortie_tokens", 0)))
             journaliser_echange(transcription, reponse)
             noter_agents(
                 cerveau="erreur" if bilan.get("erreur") else "veille",
@@ -4832,6 +5276,10 @@ def main() -> int:
         # Une recherche en cours reste « en_cours » dans le fichier : elle
         # sera reprise (ou marquée en échec) au prochain lancement.
         travailleur_recherche.arreter()
+        # Lot LT : une tâche longue reste « en_cours » à son dernier point
+        # de reprise ; elle repartira de là au prochain lancement.
+        PRIVE.suspendus = []
+        travailleur_taches.arreter()
         PRIVE.sortir()  # lot PR : mémoire privée jetée (sans effet sinon).
         session_navigateur.fermer()
     return 0

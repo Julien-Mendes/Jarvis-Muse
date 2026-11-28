@@ -37,6 +37,11 @@ CLES_LUES = {
                "delai_cerveau_s": "boucle_voix",
                "delai_tour_s": "boucle_voix"},
     "cerveau": {"effort": "config_jarvis"},
+    # Lot LT : lues par taches_longues.reglages().
+    "taches_longues": {"duree_max_minutes": "taches_longues",
+                       "max_etapes": "taches_longues",
+                       "jetons_par_minute": "taches_longues",
+                       "effort": "taches_longues"},
     "minuteur": {"max_actifs": "minuteur", "duree_max": "minuteur"},
     "yeux": {"fournisseur_vision": "yeux", "modele_vision_groq": "yeux",
              "modele_vision_anthropic": "yeux", "largeur_max": "yeux",

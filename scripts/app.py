@@ -19,6 +19,10 @@ Ce que montre la fenêtre :
   - Panneau recherches (lot R1) : recherches différées lues dans
     data/recherches.json (lecture seule) avec leur statut ; un clic sur
     une recherche ouvre sa réponse et ses sources (titres + URL).
+  - Panneau Tâches longues (lot LT), sous les recherches : tâches lues
+    dans data/taches_longues.json (lecture seule) avec leur état et leur
+    progression (étapes faites / étapes du plan) ; un clic ouvre le détail
+    (objectif, plan coché, résultat ou ce qui a arrêté la tâche).
   - Panneau Connaissances (lot KB) : notes personnelles lues dans
     data/connaissances.json (texte + date), la plus récente d'abord ; la
     croix d'une note la supprime après une seconde confirmation (« Supprimer ? »
@@ -93,6 +97,7 @@ if str(Path(__file__).resolve().parent) not in sys.path:
 import config_jarvis  # noqa: E402
 import recherche as recherche_mod  # noqa: E402 — lot R1 (lecture seule).
 import connaissances as connaissances_mod  # noqa: E402 — lot KB.
+import taches_longues as taches_mod  # noqa: E402 — lot LT (lecture seule).
 
 # Fuseau horaire : [general] fuseau_horaire de la configuration (K1).
 FUSEAU = config_jarvis.fuseau()
@@ -103,6 +108,7 @@ FICHIER_PTT = RACINE / "data" / "hud-ptt.json"
 FICHIER_MINUTEURS = RACINE / "data" / "timers.json"
 FICHIER_RECHERCHES = RACINE / "data" / "recherches.json"
 FICHIER_CONNAISSANCES = RACINE / "data" / "connaissances.json"
+FICHIER_TACHES = RACINE / "data" / "taches_longues.json"
 DOSSIER_CONVERSATIONS = RACINE / "data" / "conversations"
 # Ancien journal unique (étape 7) : plus écrit par la boucle, lu en repli
 # si le journal du jour n'existe pas encore.
@@ -472,6 +478,15 @@ TEXTES = {
         "recherche_fenetre": "Recherche — Jarvis",
         "recherche_sources": "Sources",
         "recherche_attente": "Pas encore de réponse : la recherche est {statut}.",
+        "taches": "Tâches longues",
+        "aucune_tache": "Aucune tâche longue.",
+        "tache_fenetre": "Tâche longue — Jarvis",
+        "tache_objectif": "Objectif",
+        "tache_plan": "Plan",
+        "tache_resultat": "Résultat",
+        "tache_arret": "Arrêtée : {raison}.",
+        "tache_attente": "Pas encore de résultat : la tâche avance ({progression}).",
+        "tache_budget": "Temps : {duree} sur {budget}",
         "pastille_repos": "● EN LIGNE",
         "pastille_ecoute": "● ÉCOUTE",
         "pastille_reflexion": "● ANALYSE",
@@ -504,6 +519,7 @@ TEXTES = {
         "agent_navigateur": "Navigateur",
         "agent_minuteurs": "Minuteurs",
         "agent_recherches": "Recherches",
+        "agent_taches": "Tâches",
         "agent_notes": "Notes",
         "statut_actif": "actif",
         "statut_veille": "en veille",
@@ -557,6 +573,15 @@ TEXTES = {
         "recherche_fenetre": "Research — Jarvis",
         "recherche_sources": "Sources",
         "recherche_attente": "No answer yet: the research is {statut}.",
+        "taches": "Long tasks",
+        "aucune_tache": "No long tasks.",
+        "tache_fenetre": "Long task — Jarvis",
+        "tache_objectif": "Goal",
+        "tache_plan": "Plan",
+        "tache_resultat": "Result",
+        "tache_arret": "Stopped: {raison}.",
+        "tache_attente": "No result yet: the task is moving along ({progression}).",
+        "tache_budget": "Time: {duree} out of {budget}",
         "pastille_repos": "● ONLINE",
         "pastille_ecoute": "● LISTENING",
         "pastille_reflexion": "● THINKING",
@@ -588,6 +613,7 @@ TEXTES = {
         "agent_navigateur": "Browser",
         "agent_minuteurs": "Timers",
         "agent_recherches": "Research",
+        "agent_taches": "Tasks",
         "agent_notes": "Notes",
         "statut_actif": "active",
         "statut_veille": "idle",
@@ -824,6 +850,52 @@ def formater_recherches(recherches: list, langue: str = "fr") -> tuple:
     return tuple(lignes) if lignes else (_texte(langue, "aucune_recherche"),)
 
 
+MAX_TACHES_PANNEAU = 4
+
+
+def charger_taches(chemin: Path | None = None) -> list:
+    """Lit data/taches_longues.json (lecture seule) ; la plus récente
+    d'abord. Absent ou illisible : liste vide (l'application ne l'écrit
+    jamais : c'est le travailleur de la boucle, sous verrou)."""
+    try:
+        donnees = json.loads(Path(chemin or FICHIER_TACHES).read_text(
+            encoding="utf-8"))
+        taches = donnees.get("taches", [])
+    except (OSError, ValueError, AttributeError):
+        return []
+    propres = [t for t in taches if isinstance(t, dict)
+               and isinstance(t.get("id"), int)
+               and t.get("etat") in taches_mod.ETATS
+               and isinstance(t.get("plan", []), list)]
+    return sorted(propres, key=lambda t: -t["id"])
+
+
+def formater_taches(taches: list, langue: str = "fr") -> tuple:
+    """Lignes « • titre — 3/7 · en cours » du panneau Tâches longues."""
+    lignes = []
+    for tache in taches[:MAX_TACHES_PANNEAU]:
+        titre = recherche_mod.texte_parle(
+            tache.get("titre") or tache.get("objectif", ""), 32)
+        lignes.append(f"• {titre} — {taches_mod.progression(tache)} · "
+                      f"{taches_mod.etiquette_etat(tache, langue)}")
+    return tuple(lignes) if lignes else (_texte(langue, "aucune_tache"),)
+
+
+def statut_tache(tache: dict) -> str:
+    """Couleur d'une tâche longue : terminée « ok », en cours « actif »
+    (« attente » si elle attend son tour ou un nouvel essai), bloquée
+    « erreur », budget épuisé ou annulée « attente »."""
+    if tache.get("etat") == "terminee":
+        return "ok"
+    if tache.get("etat") == "en_cours":
+        if not tache.get("demarree") or tache.get("attente"):
+            return "attente"
+        return "actif"
+    raison = str(tache.get("raison") or "")
+    return "attente" if raison.startswith("budget") or raison == "annulee" \
+        else "erreur"
+
+
 MAX_NOTES_PANNEAU = 50          # au-delà : « … et N de plus » (widgets légers)
 DELAI_CONFIRMATION_SUPPRESSION_MS = 4000
 
@@ -961,11 +1033,12 @@ def statut_charge(pourcent) -> str:
     return "attente" if pourcent >= 70 else "ok"
 
 
-AGENTS = ("cerveau", "voix", "navigateur", "minuteurs", "recherches", "notes")
+AGENTS = ("cerveau", "voix", "navigateur", "minuteurs", "recherches",
+          "taches", "notes")
 
 
 def etats_agents(etat: dict, minuteurs: list, recherches: list,
-                 notes_ok: bool = True) -> dict:
+                 notes_ok: bool = True, taches: list | None = None) -> dict:
     """État de chaque capacité : « actif », « veille » ou « erreur ».
 
     Cerveau, voix et navigateur dépendent de la boucle vocale : boucle
@@ -996,6 +1069,8 @@ def etats_agents(etat: dict, minuteurs: list, recherches: list,
         "recherches": ("actif" if any(
             t.get("statut") in ("en_attente", "en_cours")
             for t in recherches) else "veille"),
+        "taches": ("actif" if any(t.get("etat") == "en_cours"
+                                  for t in taches or []) else "veille"),
         "notes": "veille" if notes_ok else "erreur",
     }
     if boucle == "erreur" and not erreur_voix:
@@ -1521,6 +1596,7 @@ class Application:
         self._texte_minuteurs: tuple = ()
         self._tuiles_minuteurs: list = []  # thème stylé : (texte, jauge)
         self._cle_recherches: tuple = ()
+        self._cle_taches: tuple = ()
         self._micro_enfonce = False
         self._etiquettes_bulles: list = []
         self._apres_redimensionnement = None
@@ -1704,7 +1780,7 @@ class Application:
             self.zone_conversation._scrollbar.configure(width=8)
         except Exception:
             pass
-        self.zone_conversation.grid(row=0, column=0, rowspan=3,
+        self.zone_conversation.grid(row=0, column=0, rowspan=4,
                                     sticky="nsew", padx=(8, 0), pady=8)
         # add="+" : CTkScrollableFrame met à jour sa zone de défilement
         # (scrollregion) dans sa propre liaison <Configure> ; sans add="+",
@@ -1731,10 +1807,12 @@ class Application:
 
         # Panneau Recherches (lot R1), sous les minuteurs : lecture seule.
         # Lot KB : minuteurs et recherches restent compacts en haut ; le
-        # panneau Connaissances (rangée 2) prend la hauteur qui reste.
+        # panneau Connaissances (rangée 3 depuis le lot LT) prend la hauteur
+        # qui reste.
         self.centre.grid_rowconfigure(0, weight=0)
         self.centre.grid_rowconfigure(1, weight=0)
-        self.centre.grid_rowconfigure(2, weight=1)
+        self.centre.grid_rowconfigure(2, weight=0)
+        self.centre.grid_rowconfigure(3, weight=1)
         self.panneau_recherches = ctk.CTkFrame(
             self.centre, fg_color=COULEUR_PANNEAU, corner_radius=12,
             **options_panneau())
@@ -1751,13 +1829,31 @@ class Application:
             self.panneau_recherches, fg_color="transparent")
         self.conteneur_recherches.pack(fill="x", padx=4, pady=(0, 10))
 
+        # Panneau Tâches longues (lot LT), rangée suivante, comme Recherches :
+        # lecture seule, état et progression, clic = détail.
+        self.panneau_taches = ctk.CTkFrame(
+            self.centre, fg_color=COULEUR_PANNEAU, corner_radius=12,
+            **options_panneau())
+        self.panneau_taches.grid(row=2, column=1, sticky="new", padx=8,
+                                 pady=4)
+        self.panneau_taches.configure(width=230)
+        self.titre_taches = ctk.CTkLabel(
+            self.panneau_taches, text=self._titre("taches"),
+            font=_police(14, True, titre=True),
+            text_color=STYLE.get("titre_panneau") or COULEUR_TEXTE,
+            anchor="w")
+        self.titre_taches.pack(fill="x", padx=12, pady=(10, 2))
+        self.conteneur_taches = ctk.CTkFrame(
+            self.panneau_taches, fg_color="transparent")
+        self.conteneur_taches.pack(fill="x", padx=4, pady=(0, 10))
+
         # Panneau Connaissances (lot KB), sous les recherches : notes (texte
         # + date) et suppression confirmée. Liste défilante à elle : la
         # conversation garde son propre défilement (U2), inchangé.
         self.panneau_connaissances = ctk.CTkFrame(
             self.centre, fg_color=COULEUR_PANNEAU, corner_radius=12,
             **options_panneau())
-        self.panneau_connaissances.grid(row=2, column=1, sticky="nsew",
+        self.panneau_connaissances.grid(row=3, column=1, sticky="nsew",
                                         padx=8, pady=(4, 8))
         self.panneau_connaissances.configure(width=230)
         self.titre_connaissances = ctk.CTkLabel(
@@ -1912,6 +2008,7 @@ class Application:
         def vider_minuteurs():
             self._texte_minuteurs = ()  # force la reconstruction du panneau
             self._cle_recherches = ()
+            self._cle_taches = ()
             self._cle_connaissances = ()
             self._cle_agents = None
             self._cle_jours = None
@@ -1934,6 +2031,7 @@ class Application:
                 text=self._titre("minuteurs")),
             lambda: self.titre_recherches.configure(
                 text=self._titre("recherches")),
+            lambda: self.titre_taches.configure(text=self._titre("taches")),
             lambda: self.titre_connaissances.configure(
                 text=self._titre("connaissances")),
             lambda: self._barre_menu.entryconfigure(
@@ -2429,6 +2527,112 @@ class Application:
             text_color=COULEUR_TEXTE_SUR_ACCENT, corner_radius=18, height=34,
             command=fenetre.destroy).pack(pady=(0, 10))
 
+    # -- Tâches longues (lot LT) ---------------------------------------
+
+    def _rafraichir_taches(self, taches: list) -> None:
+        """Reconstruit le panneau Tâches longues seulement s'il a changé."""
+        lignes = formater_taches(taches, self.langue)
+        cle = (lignes, tuple((t.get("id"), statut_tache(t))
+                             for t in taches[:MAX_TACHES_PANNEAU]))
+        if cle == self._cle_taches:
+            return
+        self._cle_taches = cle
+        for enfant in self.conteneur_taches.winfo_children():
+            enfant.destroy()
+        if not taches:
+            ctk.CTkLabel(
+                self.conteneur_taches, text=lignes[0], font=_police(12),
+                text_color=COULEUR_TEXTE_FAIBLE, anchor="w",
+                justify="left").pack(fill="x", padx=8, pady=2)
+            return
+        nouveaux = self._nouveaux("taches", [t.get("id") for t in taches])
+        for ligne, tache in zip(lignes, taches):
+            rangee = ctk.CTkFrame(self.conteneur_taches,
+                                  **(options_tuile() if STYLE
+                                     else {"fg_color": "transparent"}))
+            rangee.pack(fill="x", padx=6 if STYLE else 2,
+                        pady=2 if STYLE else 1)
+            ctk.CTkLabel(
+                rangee, text="●", font=_police(12), width=14, height=22,
+                text_color=(couleur_statut(statut_tache(tache), COULEUR_TEXTE)
+                            if STYLE else couleur_etat(statut_tache(tache)))
+            ).pack(side="left", padx=(8 if STYLE else 6, 0),
+                   pady=4 if STYLE else 0)
+            bouton = ctk.CTkButton(
+                rangee, text=ligne.removeprefix("• "), font=_police(12),
+                fg_color="transparent", hover_color=COULEUR_SURVOL_LISTE,
+                text_color=COULEUR_TEXTE, anchor="w",
+                height=22 if STYLE else 26,
+                command=lambda t=tache: self.ouvrir_tache(t))
+            bouton.pack(fill="x", padx=(0, 6 if STYLE else 4),
+                        pady=4 if STYLE else 1)
+            if tache.get("id") in nouveaux:
+                if STYLE:
+                    self._surligner(rangee, "border_color", COULEUR_ACCENT,
+                                    STYLE["bordure_panneau"])
+                else:
+                    self._surligner(bouton, "text_color", COULEUR_ACCENT,
+                                    COULEUR_TEXTE)
+
+    def ouvrir_tache(self, tache: dict) -> None:
+        """Fenêtre de détail d'une tâche longue : titre, état, temps,
+        objectif, plan coché, puis résultat (ou ce qui l'a arrêtée)."""
+        fenetre = ctk.CTkToplevel(self.fenetre)
+        _fond_de_fenetre(fenetre)
+        fenetre.title(self.t("tache_fenetre"))
+        fenetre.geometry("580x520")
+        zone = ctk.CTkScrollableFrame(
+            fenetre, fg_color=COULEUR_FOND, corner_radius=0,
+            scrollbar_button_color=COULEUR_BARRE_DEFILEMENT)
+        zone.pack(fill="both", expand=True, padx=10, pady=(10, 4))
+
+        def libelle(texte, taille=13, gras=False, faible=False, marge=(0, 6)):
+            ctk.CTkLabel(zone, text=texte, font=_police(taille, gras),
+                         text_color=(COULEUR_TEXTE_FAIBLE if faible
+                                     else COULEUR_TEXTE),
+                         anchor="w", justify="left", wraplength=520
+                         ).pack(fill="x", padx=6, pady=marge)
+
+        libelle(str(tache.get("titre") or tache.get("objectif", "")), 15,
+                True, marge=(4, 2))
+        budget = tache.get("budget") or {}
+        libelle(f"{taches_mod.etiquette_etat(tache, self.langue)} · "
+                f"{taches_mod.progression(tache)} · "
+                + self.t("tache_budget").format(
+                    duree=taches_mod.formater_duree(
+                        tache.get("temps_utilise_s", 0), self.langue),
+                    budget=taches_mod.formater_duree(
+                        budget.get("duree_max_s", 0), self.langue)),
+                12, faible=True, marge=(0, 8))
+        libelle(self.t("tache_objectif"), 13, True, marge=(2, 2))
+        libelle(str(tache.get("objectif", "")))
+        plan = [e for e in tache.get("plan", []) if isinstance(e, dict)]
+        if plan:
+            libelle(self.t("tache_plan"), 13, True, marge=(2, 2))
+            for n, etape in enumerate(plan, start=1):
+                marque = "✓" if etape.get("etat") == "faite" else (
+                    "→" if tache.get("etape_en_cours") == n - 1 else "·")
+                libelle(f"{marque} {n}. "
+                        + recherche_mod.texte_parle(etape.get("description"),
+                                                    160), 12,
+                        faible=etape.get("etat") != "faite", marge=(0, 1))
+        if tache.get("etat") == "bloquee":
+            libelle(self.t("tache_arret").format(
+                raison=taches_mod.raison(self.langue, tache)), 13,
+                marge=(8, 4))
+        if tache.get("resultat"):
+            libelle(self.t("tache_resultat"), 13, True, marge=(6, 2))
+            libelle(recherche_mod.texte_parle(
+                tache["resultat"], taches_mod.LONGUEUR_MAX_RESULTAT))
+        elif tache.get("etat") == "en_cours":
+            libelle(self.t("tache_attente").format(
+                progression=taches_mod.progression(tache)), 13, marge=(8, 4))
+        ctk.CTkButton(
+            fenetre, text=self.t("fermer"), font=_police(13),
+            fg_color=COULEUR_ACCENT, hover_color=COULEUR_ACCENT_SURVOL,
+            text_color=COULEUR_TEXTE_SUR_ACCENT, corner_radius=18, height=34,
+            command=fenetre.destroy).pack(pady=(0, 10))
+
     # -- Connaissances (lot KB) ----------------------------------------
 
     def _rafraichir_connaissances(self, notes: list) -> None:
@@ -2775,7 +2979,7 @@ class Application:
             return
         self._tableau_visible = voulu
         if voulu:
-            self.colonne_bord.grid(row=0, column=2, rowspan=3, sticky="nsew")
+            self.colonne_bord.grid(row=0, column=2, rowspan=4, sticky="nsew")
         else:
             self.colonne_bord.grid_remove()
 
@@ -3085,6 +3289,7 @@ class Application:
                 self._appliquer_langue()
             minuteurs = charger_minuteurs()
             recherches = charger_recherches()
+            taches = charger_taches()
             notes = charger_notes()
             entrees = lire_conversation()
             prive = bool(etat.get("prive"))
@@ -3133,12 +3338,13 @@ class Application:
             # Minuteurs.
             self._rafraichir_minuteurs(minuteurs, maintenant)
             self._rafraichir_recherches(recherches)
+            self._rafraichir_taches(taches)
             self._rafraichir_connaissances(notes)
             # Lot DB : agents (à chaque passage, mis à jour sur place) et
             # liste des jours (relue quand le journal du jour grandit, au
             # plus toutes les 5 min sinon).
             self._rafraichir_agents(etats_agents(
-                etat, minuteurs, recherches, notes_lisibles()))
+                etat, minuteurs, recherches, notes_lisibles(), taches))
             if (len(entrees) != self._compte_du_jour
                     or time.monotonic() - self._jours_lus_a
                     > INTERVALLE_JOURS_S):

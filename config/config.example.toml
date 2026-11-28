@@ -86,6 +86,22 @@ delai_tour_s = 45
 # Prime sur [boucle] effort_groq / effort_anthropic. Mesures : docs/etape-11-cerveau.md.
 effort = "bas"
 
+[taches_longues]
+# Lot LT — tâches longues en arrière-plan (scripts/taches_longues.py,
+# data/taches_longues.json). Voir docs/etape-13-taches-longues.md.
+# Budget de temps par défaut d'une tâche, en minutes (1 à 1440). « pendant
+# 2 heures » dit par Julien remplace ce budget pour la tâche.
+duree_max_minutes = 30
+# Étapes exécutées au plus par tâche (1 à 30 ; une étape refaite après une
+# vérification ratée compte).
+max_etapes = 30
+# Débit du palier gratuit Groq (jetons par minute) ; le travailleur en laisse
+# un quart à la boucle vocale. 0 = pas de limite (modèle local du mini-PC).
+jetons_par_minute = 8000
+# Effort de raisonnement du travailleur : "moyen" (défaut : la latence ne
+# compte pas en arrière-plan) ou "bas".
+effort = "moyen"
+
 [minuteur]
 # Minuteur persistant local (décision OUI, 21 nov. 2026). Les minuteurs sont
 # dans data/timers.json (emplacement fixe : l'application, le HUD et le
