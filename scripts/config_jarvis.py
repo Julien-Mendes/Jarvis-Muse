@@ -26,6 +26,7 @@ Aucun réglage n'est lu « à moitié » : chaque clé du fichier d'exemple est 
 par un script, ou absente du fichier.
 """
 
+import math
 import os
 import sys
 from pathlib import Path
@@ -262,9 +263,13 @@ def nombre_borne(valeur, minimum: float, maximum: float, defaut: float,
 
 
 def duree_en_minutes(texte, defaut: float) -> float:
-    """« 7j », « 12h », « 90m » (ou un nombre = minutes) -> minutes."""
+    """« 7j », « 12h », « 90m » (ou un nombre = minutes) -> minutes.
+
+    Lot F1 : une valeur non finie (« inf », « nan ») donne `defaut` — un
+    budget ou une durée maximale infinis ne passent jamais."""
     if isinstance(texte, (int, float)) and not isinstance(texte, bool):
-        return float(texte) if texte > 0 else defaut
+        return (float(texte) if math.isfinite(texte) and texte > 0
+                else defaut)
     brut = str(texte or "").strip().lower()
     unites = {"j": 1440.0, "d": 1440.0, "h": 60.0, "m": 1.0}
     if brut and brut[-1] in unites:
@@ -275,7 +280,7 @@ def duree_en_minutes(texte, defaut: float) -> float:
         minutes = float(brut) * facteur
     except ValueError:
         return defaut
-    return minutes if minutes > 0 else defaut
+    return minutes if math.isfinite(minutes) and minutes > 0 else defaut
 
 
 def chemin_relatif_racine(valeur, defaut: str,

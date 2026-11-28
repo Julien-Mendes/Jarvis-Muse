@@ -14,7 +14,10 @@ Fonctionnement :
      parler, champ de saisie dans l'application pour écrire).
   3. Annonce « Jarvis prêt. » à voix haute (sans attendre).
   4. Lance l'application au premier plan et attend qu'elle se ferme.
-  5. À la fermeture de l'application : arrête la boucle et le
+  5. Pendant la session, relance le surveillant de minuteurs s'il meurt
+     (lot F1 ; après 3 échecs rapprochés : fenêtre d'avertissement et plus
+     de relance).
+  6. À la fermeture de l'application : arrête la boucle et le
      surveillant, puis quitte. Fermer la fenêtre Jarvis arrête donc
      toute la session — comme le raccourci du dépôt B, où fermer le HUD
      quitte Jarvis.
@@ -150,6 +153,97 @@ def avertir_windows(message: str) -> None:
         pass
 
 
+def avertir_windows_sans_bloquer(message: str) -> None:
+    """Comme avertir_windows, dans un fil : le lanceur continue de surveiller
+    la fenêtre Jarvis pendant que la boîte de dialogue est ouverte."""
+    import threading
+
+    threading.Thread(target=avertir_windows, args=(message,),
+                     daemon=True).start()
+
+
+# Lot F1 — relance du surveillant de minuteurs. Mort en cours de session, il
+# est relancé (chaque relance est journalisée). Après MAX_ECHECS_RAPPROCHES
+# morts en FENETRE_ECHECS_S, Julien est averti par une fenêtre Windows et les
+# relances s'arrêtent (un surveillant qui meurt aussitôt ne doit pas tourner
+# en boucle). Une sortie avec le code 0 n'est pas un échec : un autre
+# surveillant tient déjà le verrou (session complète, lancer_session.ps1).
+MAX_ECHECS_RAPPROCHES = 3
+FENETRE_ECHECS_S = 600.0
+INTERVALLE_SURVEILLANCE_S = 2.0
+
+
+class RelanceSurveillant:
+    """Garde le surveillant de minuteurs en vie pendant la session.
+
+    `fabrique()` démarre le processus (objet Popen, ou None si le démarrage
+    échoue). `verifier()` est appelé régulièrement par le lanceur.
+    """
+
+    def __init__(self, fabrique, max_echecs: int = MAX_ECHECS_RAPPROCHES,
+                 fenetre_s: float = FENETRE_ECHECS_S,
+                 horloge=time.monotonic, avertir=None):
+        self.fabrique = fabrique
+        self.max_echecs = int(max_echecs)
+        self.fenetre_s = float(fenetre_s)
+        self.horloge = horloge
+        self.avertir = avertir or avertir_windows_sans_bloquer
+        self.processus = None
+        self.echecs: list = []
+        self.abandonne = False
+        self.termine = False
+
+    def demarrer(self) -> None:
+        self.processus = self.fabrique()
+        if self.processus is None:
+            self._echec("démarrage impossible")
+
+    def _echec(self, raison: str) -> None:
+        maintenant = self.horloge()
+        self.echecs = [t for t in self.echecs
+                       if maintenant - t < self.fenetre_s] + [maintenant]
+        if len(self.echecs) >= self.max_echecs:
+            self.abandonne = True
+            self.processus = None
+            journal(f"Surveillant de minuteurs : {raison} — "
+                    f"{len(self.echecs)} échecs en moins de "
+                    f"{self.fenetre_s / 60:g} min, relances arrêtées.")
+            self.avertir(
+                "Le surveillant de minuteurs de Jarvis s'est arrêté "
+                f"{len(self.echecs)} fois de suite : les alarmes ne sonneront "
+                "plus pendant cette session.\n"
+                "Voir logs/minuteur-surveillant.log et logs/minuteurs.log, "
+                "puis relancez Jarvis.")
+            return
+        journal(f"Surveillant de minuteurs : {raison} — relance "
+                f"({len(self.echecs)}/{self.max_echecs}).")
+        self.processus = self.fabrique()
+        if self.processus is None:
+            self._echec("relance impossible")
+
+    def verifier(self) -> None:
+        """Relance le surveillant s'il est mort (rien d'autre)."""
+        if self.abandonne or self.termine:
+            return
+        if self.processus is None:
+            self._echec("absent")
+            return
+        try:
+            code = self.processus.poll()
+        except Exception as erreur:  # noqa: BLE001 — jamais planter ici.
+            journal(f"Surveillant de minuteurs : état illisible ({erreur}).")
+            return
+        if code is None:
+            return
+        if code == 0:
+            self.termine = True
+            journal("Surveillant de minuteurs terminé normalement (code 0, "
+                    "un autre surveillant tourne sans doute déjà) : "
+                    "pas de relance.")
+            return
+        self._echec(f"arrêté avec le code {code}")
+
+
 def verifier(python: str, pythonw: str | None) -> int:
     """Vérifie que le lancement est possible, puis affiche un bilan."""
     print("Vérification du lanceur Jarvis (étape 7.1) :")
@@ -224,10 +318,12 @@ def main() -> int:
                         "Cherchez sa fenêtre (barre des tâches).")
         return 0
     journal("Lancement de la session Jarvis (sans console).")
-    surveillant = demarrer(
+    # Lot F1 : le surveillant est relancé s'il meurt en cours de session.
+    relance = RelanceSurveillant(lambda: demarrer(
         "surveillant de minuteurs",
         [interpreteur_fond, str(SCRIPT_MINUTEUR), "surveiller"],
-        "minuteur-surveillant.log")
+        "minuteur-surveillant.log"))
+    relance.demarrer()
     boucle = demarrer(
         "boucle vocale",
         [interpreteur_fond, str(SCRIPT_BOUCLE)],
@@ -236,7 +332,7 @@ def main() -> int:
         avertir_windows(
             "Jarvis n'a pas pu démarrer la boucle vocale.\n"
             "Voir logs/lancer-app.log pour le détail.")
-        arreter("surveillant de minuteurs", surveillant)
+        arreter("surveillant de minuteurs", relance.processus)
         return 1
     # Annonce de démarrage (sans attendre : la voix joue en arrière-plan),
     # dans la langue active de la configuration (F3).
@@ -257,11 +353,17 @@ def main() -> int:
             "Jarvis n'a pas pu ouvrir sa fenêtre.\n"
             "Voir logs/lancer-app.log pour le détail.")
         arreter("boucle vocale", boucle)
-        arreter("surveillant de minuteurs", surveillant)
+        arreter("surveillant de minuteurs", relance.processus)
         return 1
-    # Attendre la fermeture de la fenêtre : elle arrête la session.
+    # Attendre la fermeture de la fenêtre : elle arrête la session. En
+    # attendant, le surveillant de minuteurs est relancé s'il meurt (F1).
     try:
-        code = application.wait()
+        while True:
+            try:
+                code = application.wait(timeout=INTERVALLE_SURVEILLANCE_S)
+                break
+            except subprocess.TimeoutExpired:
+                relance.verifier()
     except KeyboardInterrupt:
         code = 0
     if code != 0:
@@ -271,7 +373,7 @@ def main() -> int:
             "La fenêtre Jarvis s'est fermée avec une erreur.\n"
             "Voir logs/app.log pour le détail.")
     arreter("boucle vocale", boucle)
-    arreter("surveillant de minuteurs", surveillant)
+    arreter("surveillant de minuteurs", relance.processus)
     journal("Session terminée.")
     return 0
 

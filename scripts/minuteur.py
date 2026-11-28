@@ -23,6 +23,12 @@ vocale dans l'autre langue (lot L1, champ « langue » de data/hud-state.json) :
 l'annonce suit alors la langue du tour. Si la voix n'est pas disponible, le
 message est affiché à l'écran et le carillon est joué quand même.
 
+Lot F1 (docs/etape-14-fiabilite-minuteurs.md) : une entrée mal formée est
+mise de côté (data/timers.json.invalides) sans arrêter les autres ; un fichier
+corrompu est conservé (data/timers.json.corrompu-…) avant de repartir de zéro ;
+un minuteur n'est retiré qu'après une annonce réussie ; chaque problème est
+signalé (logs/minuteurs.log + fenêtre Windows) et le surveillant ne meurt pas.
+
 Limites (patron du dépôt B, décisions du 21 nov. 2026) :
   - 20 minuteurs actifs maximum.
   - compte à rebours : entre quelques secondes et 1 semaine.
@@ -128,16 +134,248 @@ def chemin_donnees_defaut() -> Path:
 # Persistance (écriture atomique : fichier temporaire puis remplacement)
 # ---------------------------------------------------------------------------
 
-def charger(chemin: Path) -> dict:
-    """Lit l'état des minuteurs ; repart d'un état vide si absent ou illisible."""
+# ---------------------------------------------------------------------------
+# Lot F1 — signalement (journal + avertissement visible)
+# ---------------------------------------------------------------------------
+# Le surveillant tourne sans console (pythonw, lancé par lancer_app.py) : une
+# ligne dans un journal ne suffit pas. Chaque problème est écrit dans
+# logs/minuteurs.log ET affiché dans une fenêtre Windows, ouverte par un petit
+# processus détaché : elle ne bloque jamais le surveillant, et elle reste
+# affichée même quand l'appelant est une commande courte (minuteur.py demarrer
+# lancé par la boucle vocale), qui se termine aussitôt.
+
+DOSSIER_LOGS = Path(__file__).resolve().parent.parent / "logs"
+_SCRIPT_FENETRE = (
+    "import ctypes, sys; "
+    "ctypes.windll.user32.MessageBoxW(0, sys.argv[1], 'Jarvis — minuteurs', "
+    "0x30 | 0x40000 | 0x10000)")
+
+
+def _journaliser(message: str) -> None:
+    """Ajoute une ligne horodatée à logs/minuteurs.log (jamais d'exception)."""
     try:
-        return json.loads(chemin.read_text(encoding="utf-8"))
-    except FileNotFoundError:
+        DOSSIER_LOGS.mkdir(parents=True, exist_ok=True)
+        horodatage = datetime.now(FUSEAU).isoformat(timespec="seconds")
+        with (DOSSIER_LOGS / "minuteurs.log").open("a", encoding="utf-8") as f:
+            f.write(f"[{horodatage}] {message}\n")
+    except OSError:
         pass
-    except (ValueError, OSError) as erreur:
-        print(f"Avertissement : impossible de lire {chemin} ({erreur}) ; "
-              "on repart d'une liste vide.", file=sys.stderr)
+
+
+def _fenetre_windows(message: str) -> None:
+    """Fenêtre d'avertissement Windows, dans un processus détaché (ne bloque
+    pas l'appelant). Hors Windows : rien (le message est déjà affiché)."""
+    if sys.platform != "win32":
+        return
+    interpreteur = Path(sys.executable)
+    sans_console = interpreteur.with_name("pythonw.exe")
+    if sans_console.exists():
+        interpreteur = sans_console
+    try:
+        subprocess.Popen(
+            [str(interpreteur), "-c", _SCRIPT_FENETRE, message],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, close_fds=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, ValueError):
+        pass
+
+
+def signaler(message: str) -> None:
+    """Problème de minuteur : sortie d'erreur, journal, fenêtre Windows.
+    Ne lève jamais d'exception."""
+    try:
+        print(f"Avertissement minuteurs : {message}", file=sys.stderr,
+              flush=True)
+    except (OSError, ValueError, AttributeError):
+        pass  # pythonw sans sortie : le journal et la fenêtre suffisent.
+    _journaliser(message)
+    try:
+        _fenetre_windows(message)
+    except Exception:  # noqa: BLE001 — le signalement ne plante jamais.
+        pass
+
+
+class FichierIndisponible(OSError):
+    """timers.json existe mais ne peut pas être lu pour l'instant (verrou
+    Windows, droits…). Ce n'est pas une corruption : l'appelant ne doit
+    surtout pas repartir d'une liste vide et la réécrire par-dessus."""
+
+
+def _etat_vide() -> dict:
     return {"timers": [], "next_id": 1}
+
+
+def _mettre_de_cote_corrompu(chemin: Path, brut: bytes, raison: str) -> None:
+    """Renomme le fichier corrompu en timers.json.corrompu-AAAAMMJJ-HHMMSS.
+
+    Seulement s'il contient toujours ce qui a été lu (un autre processus a pu
+    le remplacer par un état valide entre-temps). Si le renommage échoue, on
+    lève FichierIndisponible : jamais d'écrasement silencieux.
+    """
+    try:
+        actuel = chemin.read_bytes()
+    except FileNotFoundError:
+        return  # déjà mis de côté par un autre processus.
+    except OSError as erreur:
+        raise FichierIndisponible(
+            f"{chemin.name} corrompu et impossible à relire ({erreur})"
+        ) from erreur
+    if actuel != brut:
+        raise _ContenuChange()
+    horodatage = datetime.now(FUSEAU).strftime("%Y%m%d-%H%M%S")
+    copie = chemin.with_name(f"{chemin.name}.corrompu-{horodatage}")
+    numero = 1
+    while copie.exists():
+        numero += 1
+        copie = chemin.with_name(
+            f"{chemin.name}.corrompu-{horodatage}-{numero}")
+    try:
+        chemin.replace(copie)
+    except FileNotFoundError:
+        return
+    except OSError as erreur:
+        raise FichierIndisponible(
+            f"{chemin.name} corrompu ({raison}) et impossible à mettre de "
+            f"côté ({erreur}) : aucun minuteur ne sera enregistré par-dessus."
+        ) from erreur
+    signaler(f"Le fichier des minuteurs était illisible ({raison}). Il a été "
+             f"conservé sous le nom {copie.name} (dossier data) ; la liste "
+             "des minuteurs repart de zéro.")
+
+
+class _ContenuChange(Exception):
+    """Le fichier a changé pendant sa mise de côté : relire."""
+
+
+def _lire_brut(chemin: Path) -> bytes | None:
+    """Octets de timers.json ; None s'il n'existe pas. Quelques reprises si
+    Windows le refuse un instant (remplacement en cours par un autre
+    processus) ; ensuite FichierIndisponible."""
+    for essai in range(5):
+        try:
+            return chemin.read_bytes()
+        except FileNotFoundError:
+            return None
+        except OSError as erreur:
+            if essai == 4:
+                raise FichierIndisponible(
+                    f"{chemin.name} momentanément illisible ({erreur})"
+                ) from erreur
+            time.sleep(0.05)
+    return None
+
+
+def charger(chemin: Path) -> dict:
+    """Lit l'état des minuteurs ; état vide si le fichier est absent.
+
+    Lot F1 : un fichier corrompu (JSON invalide, structure inattendue) est
+    d'abord conservé (timers.json.corrompu-…, signalé) avant de repartir
+    d'une liste vide. Un fichier momentanément illisible lève
+    FichierIndisponible (sous-classe d'OSError) : on ne repart jamais d'une
+    liste vide qui serait ensuite écrite par-dessus les vrais minuteurs.
+    """
+    chemin = Path(chemin)
+    for _ in range(3):
+        brut = _lire_brut(chemin)
+        if brut is None:
+            return _etat_vide()
+        try:
+            etat = json.loads(brut.decode("utf-8"))
+            raison = None
+            if not isinstance(etat, dict):
+                raison = "contenu inattendu"
+            elif not isinstance(etat.get("timers", []), list):
+                raison = "liste des minuteurs inattendue"
+        except ValueError as erreur:  # JSON ou UTF-8 invalide.
+            raison = f"JSON invalide : {erreur}"
+        if raison is None:
+            break
+        try:
+            _mettre_de_cote_corrompu(chemin, brut, raison)
+        except _ContenuChange:
+            continue
+        return _etat_vide()
+    else:
+        raise FichierIndisponible(f"{chemin.name} change sans cesse")
+    etat.setdefault("timers", [])
+    if not isinstance(etat.get("next_id"), int) or isinstance(
+            etat.get("next_id"), bool):
+        identifiants = [m.get("id") for m in etat["timers"]
+                        if isinstance(m, dict)
+                        and isinstance(m.get("id"), int)]
+        etat["next_id"] = max(identifiants, default=0) + 1
+    return etat
+
+
+# ---------------------------------------------------------------------------
+# Lot F1 — validation des entrées
+# ---------------------------------------------------------------------------
+
+def echeance(minuteur) -> datetime:
+    """Échéance d'un minuteur, avec fuseau. ValueError (raison lisible) si
+    l'entrée est mal formée : pas un objet, échéance absente, date
+    illisible, date sans fuseau (incomparable avec l'heure actuelle)."""
+    if not isinstance(minuteur, dict):
+        raise ValueError("entrée qui n'est pas un minuteur")
+    brut = minuteur.get("due")
+    if brut is None or brut == "":
+        raise ValueError("échéance absente")
+    if not isinstance(brut, str):
+        raise ValueError("échéance illisible")
+    try:
+        due = datetime.fromisoformat(brut)
+    except ValueError:
+        raise ValueError(f"échéance illisible (« {brut[:40]} »)") from None
+    if due.tzinfo is None or due.utcoffset() is None:
+        raise ValueError("échéance sans fuseau horaire")
+    return due
+
+
+def _nom_minuteur(minuteur) -> str:
+    if isinstance(minuteur, dict):
+        etiquette = str(minuteur.get("label") or "").strip()
+        if etiquette:
+            return f"« {etiquette[:LONGUEUR_MAX_ETIQUETTE]} »"
+        if minuteur.get("id") is not None:
+            return f"n° {minuteur.get('id')}"
+    return "sans nom"
+
+
+def chemin_invalides(chemin: Path) -> Path:
+    """timers.json.invalides : entrées mal formées mises de côté (lot F1)."""
+    chemin = Path(chemin)
+    return chemin.with_name(chemin.name + ".invalides")
+
+
+def _ecarter_invalides(chemin: Path, etat: dict) -> list:
+    """Retire de `etat` les entrées mal formées, les ajoute (avec la raison)
+    à timers.json.invalides et les signale. À appeler sous verrou ; l'appelant
+    sauvegarde `etat`. Retourne les minuteurs valides (avec leur échéance)."""
+    valides, ecartes = [], []
+    for minuteur in etat["timers"]:
+        try:
+            valides.append((minuteur, echeance(minuteur)))
+        except ValueError as erreur:
+            ecartes.append({"minuteur": minuteur, "raison": str(erreur),
+                            "ecarte_le": maintenant().isoformat()})
+    if not ecartes:
+        return valides
+    fichier = chemin_invalides(chemin)
+    try:
+        deja = json.loads(fichier.read_text(encoding="utf-8"))
+        if not isinstance(deja, list):
+            deja = []
+    except (OSError, ValueError):
+        deja = []
+    sauvegarder(fichier, deja + ecartes)
+    etat["timers"] = [m for m, _ in valides]
+    noms = ", ".join(f"{_nom_minuteur(e['minuteur'])} ({e['raison']})"
+                     for e in ecartes[:5])
+    signaler(f"{len(ecartes)} minuteur(s) mal formé(s) écarté(s) : {noms}. "
+             f"Ils sont conservés dans {fichier.name} (dossier data) ; les "
+             "autres minuteurs continuent normalement.")
+    return valides
 
 
 def sauvegarder(chemin: Path, etat: dict) -> None:
@@ -306,9 +544,55 @@ def annoncer(message: str, langue: str = "fr",
 # Déclenchement des minuteurs échus
 # ---------------------------------------------------------------------------
 
+# Lot F1 : une annonce qui plante laisse le minuteur enregistré ; nouvel essai
+# après un délai croissant (30 s, 1 min, 2 min… 5 min au plus), pour ne pas
+# relancer le carillon toutes les 5 s. Mémoire du processus : un surveillant
+# relancé réessaie tout de suite. Clé : (id, échéance).
+_ECHECS_ANNONCE: dict = {}
+DELAI_NOUVEL_ESSAI_S = 30.0
+DELAI_NOUVEL_ESSAI_MAX_S = 300.0
+
+
+def _cle_annonce(minuteur: dict) -> tuple:
+    return (minuteur.get("id"), minuteur.get("due"))
+
+
+def message_echeance(minuteur: dict, quand: datetime, ref: datetime,
+                     langue: str, debut_surveillance=None) -> str:
+    """Phrase d'échéance d'un minuteur (fr ou en), manqué ou non."""
+    manque = bool(debut_surveillance
+                  and quand < debut_surveillance - timedelta(minutes=1))
+    minuteur = dict(minuteur)
+    minuteur["label"] = str(minuteur.get("label") or "")
+    minuteur["kind"] = str(minuteur.get("kind") or "timer")
+    etiquette = minuteur["label"]
+    if langue == "en":
+        return message_echeance_en(minuteur, quand, ref, manque)
+    if manque:
+        return (f"Pendant que j'étais éteint, ton {minuteur['kind']} "
+                f"{'« ' + etiquette + ' » ' if etiquette else ''}"
+                f"est arrivé à échéance {formater_echeance(quand, ref)}.")
+    if minuteur["kind"] == "timer":
+        return (f"Ton minuteur {'« ' + etiquette + ' » ' if etiquette else ''}"
+                "est terminé.")
+    return (f"Rappel : {etiquette}." if etiquette
+            else "Ton rappel est arrivé à échéance.")
+
+
+def _retirer(chemin: Path, minuteur: dict) -> None:
+    """Retire un minuteur annoncé (sous verrou ; relu : un autre processus a
+    pu modifier le fichier pendant l'annonce)."""
+    with verrou_fichier(chemin):
+        etat = charger(chemin)
+        restants = [m for m in etat["timers"] if m != minuteur]
+        if len(restants) != len(etat["timers"]):
+            etat["timers"] = restants
+            sauvegarder(chemin, etat)
+
+
 def declencher_dus(chemin: Path, debut_surveillance=None,
                    langue: str | None = None) -> list:
-    """Annonce et retire tous les minuteurs échus. Retourne les messages.
+    """Annonce puis retire les minuteurs échus. Retourne les messages dits.
 
     `langue` : « fr » ou « en » ; None = langue de la config (relue ici),
     ou celle du tour en cours s'il est dans l'autre langue (L1).
@@ -316,50 +600,70 @@ def declencher_dus(chemin: Path, debut_surveillance=None,
     Si debut_surveillance est fourni (démarrage de `surveiller`), les
     minuteurs échus avant (début - 1 minute) sont annoncés comme manqués
     pendant que la machine était éteinte.
+
+    Lot F1 : une entrée mal formée est mise de côté et signalée (les autres
+    sonnent) ; un minuteur n'est retiré qu'après une annonce réussie — si
+    l'annonce plante, il reste enregistré, l'erreur est signalée et un
+    nouvel essai suit. Les seules exceptions possibles viennent du fichier
+    lui-même (FichierIndisponible) : le surveillant les rattrape.
     """
+    # Le minuteur n'étant retiré qu'après son annonce, deux déclencheurs
+    # simultanés (le surveillant et `minuteur.py declencher`) l'annonceraient
+    # deux fois : un seul annonce à la fois, l'autre passe son tour.
+    annonceur = VerrouInstance("annonce-minuteurs", Path(chemin).parent)
+    if not annonceur.acquerir():
+        return []
+    try:
+        return _declencher_dus(chemin, debut_surveillance, langue)
+    finally:
+        annonceur.liberer()
+
+
+def _declencher_dus(chemin: Path, debut_surveillance, langue) -> list:
     ref = maintenant()
-    # Lire, retirer les échus et réécrire sous verrou (M3) ; les annonces,
-    # longues, se font hors verrou.
+    # Lire, écarter les entrées mal formées et repérer les échus sous verrou
+    # (M3) ; les annonces, longues, se font hors verrou.
     with verrou_fichier(chemin):
         etat = charger(chemin)
-        minuteurs = etat["timers"]
-        # Un minuteur en pause (lot U3) ne sonne jamais.
-        dus = sorted(
-            (m for m in minuteurs
-             if not m.get("paused")
-             and datetime.fromisoformat(m["due"]) <= ref),
-            key=lambda m: m["due"],
-        )
-        if not dus:
-            return []
-        etat["timers"] = [m for m in minuteurs if m not in dus]
-        sauvegarder(chemin, etat)
+        avant = len(etat["timers"])
+        valides = _ecarter_invalides(chemin, etat)
+        if len(etat["timers"]) != avant:
+            sauvegarder(chemin, etat)
+    horloge = time.monotonic()
+    # Un minuteur en pause (lot U3) ne sonne jamais.
+    dus = sorted(((m, quand) for m, quand in valides
+                  if not m.get("paused") and quand <= ref
+                  and _ECHECS_ANNONCE.get(_cle_annonce(m), (0, 0.0))[1]
+                  <= horloge),
+                 key=lambda paire: paire[1])
+    if not dus:
+        return []
     langue = langue or langue_annonce()
 
     messages = []
-    for minuteur in dus:
-        quand = datetime.fromisoformat(minuteur["due"])
-        etiquette = minuteur["label"]
-        if langue == "en":
-            messages.append(message_echeance_en(
-                minuteur, quand, ref,
-                bool(debut_surveillance
-                     and quand < debut_surveillance - timedelta(minutes=1))))
-        elif debut_surveillance and quand < debut_surveillance - timedelta(minutes=1):
-            messages.append(
-                f"Pendant que j'étais éteint, ton {minuteur['kind']} "
-                f"{'« ' + etiquette + ' » ' if etiquette else ''}"
-                f"est arrivé à échéance {formater_echeance(quand, ref)}.")
-        elif minuteur["kind"] == "timer":
-            messages.append(
-                f"Ton minuteur {'« ' + etiquette + ' » ' if etiquette else ''}"
-                "est terminé.")
-        else:
-            messages.append(
-                f"Rappel : {etiquette}." if etiquette
-                else "Ton rappel est arrivé à échéance.")
-    for message in messages:
-        annoncer(message, langue)
+    for minuteur, quand in dus:
+        message = message_echeance(minuteur, quand, ref, langue,
+                                   debut_surveillance)
+        cle = _cle_annonce(minuteur)
+        try:
+            annoncer(message, langue)
+        except Exception as erreur:  # noqa: BLE001 — le minuteur reste.
+            echecs = _ECHECS_ANNONCE.get(cle, (0, 0.0))[0] + 1
+            delai = min(DELAI_NOUVEL_ESSAI_MAX_S,
+                        DELAI_NOUVEL_ESSAI_S * 2 ** (echecs - 1))
+            _ECHECS_ANNONCE[cle] = (echecs, time.monotonic() + delai)
+            if echecs == 1:
+                signaler(f"L'annonce du minuteur {_nom_minuteur(minuteur)} a "
+                         f"échoué ({type(erreur).__name__} : {erreur}). Il "
+                         "reste enregistré ; nouvel essai dans "
+                         f"{delai:g} s. Message : {message}")
+            else:
+                _journaliser(f"Annonce de {_nom_minuteur(minuteur)} : nouvel "
+                             f"échec n° {echecs} ({erreur}).")
+            continue
+        _ECHECS_ANNONCE.pop(cle, None)
+        messages.append(message)
+        _retirer(chemin, minuteur)
     return messages
 
 
@@ -399,18 +703,14 @@ def cmd_demarrer(args) -> int:
         print("Erreur : c'est à plus d'un an ; trop loin.", file=sys.stderr)
         return 1
 
-    with verrou_fichier(args.donnees):  # M3 : lire-modifier-écrire d'un bloc.
-        etat = charger(args.donnees)
-        if len(etat["timers"]) >= MAX_ACTIFS:
-            print(f"Erreur : il y a déjà {MAX_ACTIFS} minuteurs actifs ; "
-                  "annulez-en d'abord.", file=sys.stderr)
-            return 1
-        minuteur = {"id": etat["next_id"], "kind": genre,
-                    "label": etiquette, "due": due.isoformat(),
-                    "minutes": minutes, "created": ref.isoformat()}
-        etat["next_id"] += 1
-        etat["timers"].append(minuteur)
-        sauvegarder(args.donnees, etat)
+    try:
+        minuteur = _ajouter(args.donnees, genre, etiquette, due, minutes, ref)
+    except FichierIndisponible as erreur:
+        print(f"Erreur : fichier des minuteurs indisponible pour l'instant "
+              f"({erreur}) ; réessayez.", file=sys.stderr)
+        return 1
+    if minuteur is None:
+        return 1
 
     quoi = (f"Minuteur de {formater_duree(minutes)}" if genre == "timer"
             else "Rappel")
@@ -421,19 +721,48 @@ def cmd_demarrer(args) -> int:
     return 0
 
 
+def _ajouter(chemin: Path, genre: str, etiquette: str, due: datetime,
+             minutes, ref: datetime) -> dict | None:
+    """Ajoute un minuteur sous verrou ; None (message affiché) si la limite
+    est atteinte. FichierIndisponible : rien n'est écrit."""
+    with verrou_fichier(chemin):  # M3 : lire-modifier-écrire d'un bloc.
+        etat = charger(chemin)
+        if len(etat["timers"]) >= MAX_ACTIFS:
+            print(f"Erreur : il y a déjà {MAX_ACTIFS} minuteurs actifs ; "
+                  "annulez-en d'abord.", file=sys.stderr)
+            return None
+        minuteur = {"id": etat["next_id"], "kind": genre,
+                    "label": etiquette, "due": due.isoformat(),
+                    "minutes": minutes, "created": ref.isoformat()}
+        etat["next_id"] += 1
+        etat["timers"].append(minuteur)
+        sauvegarder(chemin, etat)
+    return minuteur
+
+
 def cmd_lister(args) -> int:
     ref = maintenant()
     etat = charger(args.donnees)
-    minuteurs = sorted(etat["timers"], key=lambda m: m["due"])
-    if not minuteurs:
+    # Lot F1 : une entrée mal formée est ignorée ici (lecture seule) ; le
+    # surveillant la met de côté et la signale.
+    valides, ignores = [], 0
+    for minuteur in etat["timers"]:
+        try:
+            valides.append((echeance(minuteur), minuteur))
+        except ValueError:
+            ignores += 1
+    valides.sort(key=lambda paire: paire[0])
+    if ignores:
+        print(f"({ignores} entrée(s) mal formée(s) ignorée(s).)")
+    if not valides:
         print("Aucun minuteur ni rappel en cours.")
         return 0
-    print(f"{len(minuteurs)} en cours :")
-    for minuteur in minuteurs:
-        due = datetime.fromisoformat(minuteur["due"])
+    print(f"{len(valides)} en cours :")
+    for due, minuteur in valides:
         reste = due - ref
-        quoi = minuteur["kind"] + (
-            f" « {minuteur['label']} »" if minuteur["label"] else "")
+        etiquette = str(minuteur.get("label") or "")
+        quoi = str(minuteur.get("kind") or "timer") + (
+            f" « {etiquette} »" if etiquette else "")
         if minuteur.get("paused"):
             secondes = int(float(minuteur.get("remaining_s") or 0))
             print(f"- n° {minuteur['id']} — {quoi} : en pause "
@@ -465,11 +794,13 @@ def cmd_annuler(args) -> int:
         if cible.lower() in ("tout", "tous", "all", "everything"):
             supprimes = list(minuteurs)
         elif cible.isdigit():
-            supprimes = [m for m in minuteurs if m["id"] == int(cible)]
+            supprimes = [m for m in minuteurs
+                         if isinstance(m, dict) and m.get("id") == int(cible)]
         else:
             recherche = cible.lower()
-            supprimes = [m for m in minuteurs
-                         if recherche and recherche in m["label"].lower()]
+            supprimes = [m for m in minuteurs if isinstance(m, dict)
+                         and recherche
+                         and recherche in str(m.get("label") or "").lower()]
             if len(supprimes) > 1:
                 noms = ", ".join(
                     f"n° {m['id']} « {m['label']} »" for m in supprimes)
@@ -479,8 +810,8 @@ def cmd_annuler(args) -> int:
 
         if not supprimes:
             noms = ", ".join(
-                f"n° {m['id']} « {m['label'] or m['kind']} »" for m in minuteurs) \
-                or "aucun"
+                f"n° {m.get('id')} « {m.get('label') or m.get('kind')} »"
+                for m in minuteurs if isinstance(m, dict)) or "aucun"
             print(f"Erreur : aucun minuteur ne correspond à « {cible} » ; "
                   f"en cours : {noms}.", file=sys.stderr)
             return 1
@@ -488,7 +819,8 @@ def cmd_annuler(args) -> int:
         etat["timers"] = [m for m in minuteurs if m not in supprimes]
         sauvegarder(args.donnees, etat)
     noms = ", ".join(
-        f"n° {m['id']} « {m['label'] or m['kind']} »" for m in supprimes)
+        f"n° {m.get('id')} « {m.get('label') or m.get('kind')} »"
+        if isinstance(m, dict) else "entrée mal formée" for m in supprimes)
     print(f"Annulé : {noms}.")
     return 0
 
@@ -523,7 +855,7 @@ def mettre_en_pause(chemin: Path, ident: int) -> dict | None:
     def pause(_etat, minuteur, ref):
         if minuteur.get("kind") != "timer" or minuteur.get("paused"):
             return False
-        reste = (datetime.fromisoformat(minuteur["due"]) - ref).total_seconds()
+        reste = (echeance(minuteur) - ref).total_seconds()
         if reste <= 0:
             return False  # déjà échu : il va sonner.
         minuteur["paused"] = True
@@ -539,7 +871,7 @@ def reprendre(chemin: Path, ident: int) -> dict | None:
             return False
         reste = max(1.0, float(minuteur.pop("remaining_s", 0) or 0))
         minuteur.pop("paused", None)
-        ancienne = datetime.fromisoformat(minuteur["due"])
+        ancienne = echeance(minuteur)
         due = ref + timedelta(seconds=reste)
         if minuteur.get("created"):
             cree = datetime.fromisoformat(minuteur["created"])
@@ -576,21 +908,51 @@ def cmd_surveiller(args) -> int:
           f"(vérification toutes les {INTERVALLE_VERIFICATION_S:g} secondes "
           "au plus).", flush=True)
     print("Arrêter avec Ctrl+C.", flush=True)
-    declencher_dus(args.donnees, debut_surveillance=debut, langue=args.langue)
-    try:
-        while True:
-            etat = charger(args.donnees)
-            prochaines = [datetime.fromisoformat(m["due"])
-                          for m in etat["timers"] if not m.get("paused")]
-            if prochaines:
-                attente = max(
-                    0.0,
-                    min(INTERVALLE_VERIFICATION_S,
-                        (min(prochaines) - maintenant()).total_seconds()))
+    # Lot F1 : rien ne doit tuer le surveillant. Une erreur de déclenchement
+    # (fichier momentanément illisible, panne imprévue) est signalée — une
+    # fois tant qu'elle se répète à l'identique — et la boucle continue.
+    derniere_erreur = {"texte": None}
+
+    def _tour(premier: bool) -> None:
+        try:
+            if premier:
+                declencher_dus(args.donnees, debut_surveillance=debut,
+                               langue=args.langue)
             else:
-                attente = INTERVALLE_VERIFICATION_S
-            time.sleep(attente)
-            declencher_dus(args.donnees, langue=args.langue)
+                declencher_dus(args.donnees, langue=args.langue)
+        except KeyboardInterrupt:
+            raise
+        except Exception as erreur:  # noqa: BLE001 — le surveillant reste.
+            texte = f"{type(erreur).__name__} : {erreur}"
+            if texte != derniere_erreur["texte"]:
+                signaler("Vérification des minuteurs impossible "
+                         f"({texte}) ; nouvel essai dans quelques secondes.")
+            derniere_erreur["texte"] = texte
+            return
+        derniere_erreur["texte"] = None
+
+    def _attente() -> float:
+        try:
+            etat = charger(args.donnees)
+        except Exception:  # noqa: BLE001 — signalé par _tour.
+            return INTERVALLE_VERIFICATION_S
+        prochaines = []
+        for m in etat["timers"]:
+            try:
+                if not m.get("paused"):
+                    prochaines.append(echeance(m))
+            except (ValueError, AttributeError):
+                continue  # écartée (et signalée) au prochain tour.
+        if not prochaines:
+            return INTERVALLE_VERIFICATION_S
+        return max(0.0, min(INTERVALLE_VERIFICATION_S,
+                            (min(prochaines) - maintenant()).total_seconds()))
+
+    try:
+        _tour(premier=True)
+        while True:
+            time.sleep(_attente())
+            _tour(premier=False)
     except KeyboardInterrupt:
         print("\nSurveillance arrêtée. Les minuteurs restent enregistrés.")
     return 0
@@ -645,7 +1007,14 @@ def main() -> int:
     args = parser.parse_args()
     if args.donnees is None:
         args.donnees = chemin_donnees_defaut()
-    return args.fonction(args)
+    try:
+        return args.fonction(args)
+    except FichierIndisponible as erreur:
+        # Lot F1 : rien n'a été écrit. Première ligne lue par la boucle
+        # vocale (« je n'ai pas pu régler le minuteur : … »).
+        print(f"Erreur : fichier des minuteurs indisponible pour l'instant "
+              f"({erreur}) ; réessayez.", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
