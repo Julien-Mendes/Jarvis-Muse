@@ -98,9 +98,11 @@ Pour un test plus rapide : `--minutes 0.1` = 6 secondes.
   (ex. `18:30`) ou `AAAA-MM-JJTHH:MM` (ex. `2026-11-22T18:30`).
 - **Plusieurs minuteurs correspondent** à l'étiquette donnée à `annuler` :
   précisez le numéro (`annuler 3`).
-- **Le fichier `data/timers.json` est corrompu** : le script repart d'une
-  liste vide et affiche un avertissement. Pour repartir de zéro,
-  supprimez simplement le fichier.
+- **Le fichier `data/timers.json` est corrompu** : il est conservé sous
+  `data/timers.json.corrompu-…`, une fenêtre Windows le signale et la
+  liste repart de zéro. Un minuteur mal formé est mis de côté dans
+  `data/timers.json.invalides` sans arrêter les autres. Voir
+  `docs/etape-14-fiabilite-minuteurs.md` (lot F1).
 - **La surveillance ne démarre pas / se ferme** : vérifiez que Python 3.10+
   est installé (`python --version`). `surveiller` doit tourner tant qu'on
   veut des alarmes : fermer sa fenêtre arrête la surveillance (les
