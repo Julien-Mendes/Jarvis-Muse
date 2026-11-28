@@ -193,6 +193,64 @@ Mesuré sur la machine de développement : ~49 Mo de RAM, 0,00 % CPU au repos
 sans minuteur, ~0,2 % avec un compte à rebours à la seconde ou pendant que
 le globe tourne.
 
+### Tableau de bord (lots DB, U3, U5)
+
+Ajouté aux panneaux existants, dans **tous les thèmes** (or_et_nuit,
+centre_de_commande, jarvis_bleu, clair_studio) ; les panneaux Minuteurs,
+Recherches et Connaissances et le défilement de la conversation (U2) ne
+changent pas.
+
+- **Moniteur système** (en-tête, à gauche de l'horloge) : CPU, RAM et
+  disque système en **jauges circulaires**, vert sous 70 %, ambre sous
+  90 %, rouge au-delà. Une mesure toutes les **5 s** avec `psutil`
+  (`cpu_percent(interval=None)` : jamais d'attente). Sans `psutil`,
+  l'application marche et affiche « — ». Installer :
+  `pip install -r scripts\requirements-etape7.txt` (psutil 7.2.2, vérifié
+  sous Python 3.14 / Windows).
+- **Tuiles de minuteur cliquables** (lot U3) : un clic sur un minuteur
+  ouvre une petite fenêtre **Pause** / **Reprendre** / **Annuler**.
+  Annuler demande un second clic (« Confirmer ? »), comme la suppression
+  d'une note. En pause, le temps restant est figé (« en pause (4 min) »,
+  jauge grise) et le minuteur **ne sonne pas** ; à la reprise, l'échéance
+  repart de maintenant. Un rappel à heure fixe ne se met pas en pause (il
+  s'annule). L'application écrit `data/timers.json` par `minuteur.py`,
+  sous le même verrou que le surveillant ; `minuteur.py lister` montre les
+  minuteurs en pause.
+- **Recherches** : point de couleur du statut dans tous les thèmes (vert
+  prête, cyan en cours, ambre en attente, rouge échec) ; un clic ouvre la
+  réponse et ses sources (inchangé).
+- **Notes** : un clic sur le texte d'une note l'ouvre en entier (lecture
+  seule ; la croix confirmée reste le seul moyen de supprimer).
+- **Agents** : cerveau, voix, navigateur, minuteurs, recherches, notes,
+  chacun **actif** / **en veille** / **erreur** (point coloré). Cerveau,
+  voix et navigateur suivent la boucle vocale (boucle arrêtée = erreur) ;
+  la boucle signale aussi une erreur du cerveau ou du micro et la session
+  Chrome pilotée ouverte (champ `agents` de `data/hud-state.json`).
+  Minuteurs : actif s'il y en a un qui tourne ; recherches : actif s'il y
+  en a une en attente ou en cours ; notes : erreur si
+  `data/connaissances.json` est illisible.
+- **Conversations** : les jours enregistrés, du plus récent (14 au plus),
+  avec leur nombre de messages ; un clic ouvre l'Historique sur ce jour.
+  La liste est relue quand le journal du jour grandit, sinon au plus
+  toutes les 5 minutes.
+- Agents et Conversations forment une **colonne à droite**, affichée quand
+  la fenêtre fait **au moins 1100 px** de large ; menu **Affichage →
+  Tableau de bord** pour l'afficher ou la masquer pendant la session ;
+  `[app] tableau_de_bord = false` pour ne jamais l'afficher seule.
+- **Animations** (lot U5) : petite éclosion de l'orbe (+10 %, 0,36 s) quand
+  il revient au repos ou passe en erreur ; pulsation et rotation pendant
+  l'écoute, la réflexion et la réponse (inchangées) ; fondu de l'accent vers
+  la couleur normale (0,5 s) quand un minuteur, une recherche ou une note
+  apparaît. Une seule boucle `after()` sert toutes les animations et ne
+  tourne que pendant l'une d'elles : **rien n'est planifié au repos**.
+  `[app] animations = false` coupe tout, y compris la pulsation : l'orbe
+  change seulement de couleur.
+
+Mesuré sur la machine de développement (28 nov. 2026, vraie fenêtre
+CustomTkinter 6.0.0) : **48 Mo** de RAM à 900 px, **61 Mo** à 1200 px avec
+la colonne et l'historique de 3 jours, CPU au repos **0,00 à 0,08 %** sur
+20 s (or_et_nuit et centre_de_commande) — dans le budget 200 Mo / ~0 %.
+
 ## Sécurité
 
 - **Aucun serveur réseau** : l'application et la boucle communiquent
@@ -257,6 +315,10 @@ le globe tourne.
 - Améliorations possibles après validation : bouton pour vider
   l'historique affiché (sans toucher au journal), thème clair en option,
   raccourci clavier global pour ouvrir la fenêtre.
+- Tableau de bord (lot DB) : les jours du panneau Conversations restent
+  en français (« jeu. 26 nov. 2026 ») comme la fenêtre Historique ; pas
+  encore de pause / reprise d'un minuteur à la voix (seulement par la
+  tuile) ; le moniteur mesure le disque système seulement.
 - Notes quotidiennes (bloc 23) et lecture de page complète en boucle
   vocale (bloc 16) : décisions encore ouvertes, non construites dans
   cette étape.
