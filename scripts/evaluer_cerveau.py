@@ -112,8 +112,9 @@ def un_appel(cerveau, langue: str, phrase: str) -> dict:
             return {"phrase": phrase, "erreur": f"{type(erreur).__name__}: "
                     f"{categorie}",
                     "duree_s": round(time.monotonic() - debut, 2)}
-    time.sleep(PAUSE_ENTRE_APPELS_S)  # hors chrono aussi
-    return {"phrase": phrase, "duree_s": round(time.monotonic() - debut, 2),
+    duree = round(time.monotonic() - debut, 2)
+    time.sleep(PAUSE_ENTRE_APPELS_S)  # hors chrono (mesurée avant)
+    return {"phrase": phrase, "duree_s": duree,
             "texte": reponse["texte"].strip(),
             "outils": [a["nom"] for a in reponse["appels_outils"]],
             "jetons_sortie": reponse["utilisation"]["sortie"]}
