@@ -24,3 +24,6 @@ __pycache__/
 config/config.toml
 a-dire/
 vers-carson/
+
+# Image de référence visuelle : jamais versionnée
+ref-visuel/
