@@ -296,6 +296,17 @@ la colonne et l'historique de 3 jours, CPU au repos **0,00 à 0,08 %** sur
 - **Les bulles ne reviennent pas à la ligne en redimensionnant** :
   le retour à la ligne s'ajuste ~200 ms après le redimensionnement ;
   si une bulle reste trop large, redimensionnez une deuxième fois.
+- **Texte des bulles coupé en plein mot** (corrigé le 28 nov.) : sur un
+  écran Windows à 125 % ou 150 %, la largeur de retour à la ligne était
+  comptée en pixels réels puis remise à l'échelle une seconde fois par
+  CustomTkinter ; la fin de chaque ligne sortait de la bulle. Elle est
+  maintenant divisée par l'échelle de l'écran (`largeur_bulle_logique`),
+  dans la conversation comme dans l'Historique (qui suit aussi la
+  largeur de sa fenêtre). Chaque message s'affiche au complet, replié
+  sur les mots (un mot plus long que la bulle est coupé à la ligne par
+  Tk, jamais masqué) ; la bulle grandit en hauteur. Si un texte
+  paraissait encore coupé, notez l'échelle d'affichage de Windows
+  (Paramètres → Affichage) et la largeur de la fenêtre.
 - **« Impossible d'ouvrir une fenêtre »** : l'application a besoin
   d'un bureau Windows ; en connexion distante sans écran, elle ne
   peut pas s'afficher (le HUD a la même limite).
